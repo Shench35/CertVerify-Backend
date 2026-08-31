@@ -218,3 +218,9 @@ __marimo__/
 .streamlit/secrets.toml
 stitch_certverify_ai_verification_platform
 FRONTEND_STATE_STRATEGY.md
+
+# Firebase credentials
+*firebase*.json
+*-adminsdk-*.json
+serviceAccountKey.json
+firebase_credentials.json
