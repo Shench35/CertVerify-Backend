@@ -8,6 +8,7 @@ from firebase_admin.auth import (
     InvalidIdTokenError
 )
 from app.core.firebase import initialize_firebase
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -107,3 +108,27 @@ async def get_optional_user(
         return await get_current_user(credentials, authorization)
     except HTTPException:
         return None
+
+
+async def get_admin_user(
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """
+    Admin-only dependency. Checks for admin privileges via:
+    1. Firebase custom claim 'admin: true'
+    2. Email in ADMIN_EMAILS settings whitelist
+    Raises 403 if neither condition is met.
+    """
+    claims = current_user.get("claims", {})
+    is_admin_claim = claims.get("admin", False)
+    is_admin_email = current_user.get("email", "") in settings.ADMIN_EMAILS
+
+    if not is_admin_claim and not is_admin_email:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required. Access denied.",
+        )
+
+    current_user["is_admin"] = True
+    return current_user
+

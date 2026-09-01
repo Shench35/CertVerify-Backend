@@ -13,13 +13,16 @@ class Settings(BaseSettings):
     VERSION: str = "1.0.0"
     DEBUG: bool = False
 
+    # CORS
+    ALLOWED_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+
     # Database
     DATABASE_URL: str
 
     # Squad Payment Gateway
     SQUAD_SECRET_KEY: str
     SQUAD_BASE_URL: str = "https://sandbox-api-d.squadco.com"
-    SQUAD_CALLBACK_URL: str = "https://kinship-tropical-junkie.ngrok-free.dev/payment-success"
+    SQUAD_CALLBACK_URL: str = "https://junkman-thrash-omission.ngrok-free.dev/payment-success"
 
     # Google Gemini AI
     GEMINI_API_KEY: str
@@ -30,6 +33,26 @@ class Settings(BaseSettings):
     FIREBASE_CREDENTIALS_PATH: str = "certverify-backend-firebase-adminsdk-fbsvc-b867004492.json"
     FIREBASE_SERVICE_ACCOUNT_JSON: str | None = None
     FIREBASE_WEB_API_KEY: str = ""
+
+    # Celery & Redis
+    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+
+    # Email (SMTP)
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_USE_TLS: bool = True
+    EMAIL_FROM_ADDRESS: str = "noreply@certverify.com"
+    EMAIL_FROM_NAME: str = "CertVerify"
+
+    # Admin
+    ADMIN_EMAILS: list[str] = []
+    ADMIN_SECRET_KEY: str = "change-me-in-production"
+
+    # Frontend URL (for email links)
+    FRONTEND_URL: str = "http://localhost:3000"
 
     model_config = SettingsConfigDict(
         env_file=ENV_PATH,

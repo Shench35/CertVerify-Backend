@@ -1,11 +1,14 @@
 import json
+import uuid
 from typing import Optional
+from datetime import datetime
 from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends, status
 from sqlmodel import Session, select
 from app.core.database import engine
 from app.models.transaction import Transaction
-from app.services.validator_service import validate_document
+from app.models.task_result import TaskResult
 from app.core.security import get_current_user
+from app.tasks.verification_tasks import run_verification
 
 router = APIRouter()
 
@@ -14,8 +17,9 @@ ALLOWED_EXTENSIONS = {"image/jpeg", "image/png", "application/pdf"}
 
 @router.post(
     "/analyse",
-    summary="Analyse Certificate Document",
-    description="Runs multimodal forensic checks with Gemini and returns the final trust score and verdict."
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Analyse Certificate Document (Async)",
+    description="Queues certificate for AI-powered forensic verification. Returns task ID for polling status."
 )
 async def analyse_certificate_endpoint(
     file: UploadFile = File(..., description="Certificate file (JPEG, PNG, PDF)"),
@@ -23,6 +27,10 @@ async def analyse_certificate_endpoint(
     transaction_ref: Optional[str] = Form(None, description="Optional paid transaction reference"),
     current_user: dict = Depends(get_current_user)
 ):
+    """
+    Initiates async certificate verification via Celery.
+    Returns 202 with task_id to poll for results via GET /status/{task_id}.
+    """
     user_id = current_user.get("uid")
     email = current_user.get("email")
 
@@ -61,62 +69,88 @@ async def analyse_certificate_endpoint(
     file_bytes = await file.read()
     filename = file.filename
 
-    # Forensic analysis & rule validation
-    validation_result = validate_document(file_bytes, filename, cert_type)
-    if not validation_result.get("success"):
-        return {
-            "success": False,
-            "error": validation_result.get("error", "Analysis failed.")
-        }
+    # Convert file bytes to hex for JSON-safe transmission to Celery
+    file_bytes_hex = file_bytes.hex()
 
-    if validation_result.get("type_mismatch"):
-        return {
-            "success": False,
-            "type_mismatch": True,
-            "message": validation_result.get("message"),
-            "detected_type": validation_result.get("detected_type")
-        }
+    # Create TaskResult record with pending status
+    task_id = str(uuid.uuid4())
+    task_result = TaskResult(
+        task_id=task_id,
+        task_type="verification",
+        status="pending",
+        user_id=user_id,
+        transaction_ref=active_transaction_ref
+    )
 
-    document_score = validation_result.get("final_score", 0)
-
-    # Final verdict based on document forensic score alone
-    if document_score >= 75:
-        final_verdict = "AUTHENTIC"
-    elif document_score >= 40:
-        final_verdict = "SUSPICIOUS"
-    else:
-        final_verdict = "HIGH_RISK"
-
-    # Save to database
     with Session(engine) as session:
-        statement = select(Transaction).where(
-            Transaction.transaction_ref == active_transaction_ref
-        )
-        tx = session.exec(statement).first()
-        if tx:
-            tx.user_id = user_id
-            tx.cert_type = cert_type
-            tx.verification_result = json.dumps(validation_result)
-            tx.document_score = document_score
-            tx.final_trust_score = document_score
-            tx.final_verdict = final_verdict
-            session.add(tx)
-            session.commit()
+        session.add(task_result)
+        session.commit()
+
+    # Dispatch to Celery with task_id
+    run_verification.apply_async(
+        args=[file_bytes_hex, filename, cert_type, active_transaction_ref, email],
+        task_id=task_id,
+        countdown=0
+    )
 
     return {
-        "success": True,
+        "task_id": task_id,
+        "status": "pending",
         "transaction_ref": active_transaction_ref,
-        "final_trust_score": round(document_score, 1),
-        "final_verdict": final_verdict,
-        "document_score": round(document_score, 1),
-        "flagged_issues": validation_result.get("flagged_issues", []),
-        "triggered_flags": validation_result.get("triggered_flags", []),
-        "tampering_signs": validation_result.get("tampering_signs", []),
-        "extracted_info": validation_result.get("extracted_info", {}),
-        "confidence_note": validation_result.get("confidence_note", ""),
-        "message": "Document verification complete."
+        "message": "Verification queued. Poll the status endpoint to check progress."
     }
 
+
+@router.get(
+    "/status/{task_id}",
+    summary="Check Verification Task Status",
+    description="Polls the status of an async verification task."
+)
+async def get_task_status(
+    task_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Check the status of a verification task.
+    Returns: {status, result (if complete), error (if failed)}
+    """
+    with Session(engine) as session:
+        statement = select(TaskResult).where(TaskResult.task_id == task_id)
+        task_result = session.exec(statement).first()
+
+    if not task_result:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found."
+        )
+
+    # Authorization: ensure user owns this task
+    if task_result.user_id != current_user.get("uid"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to view this task."
+        )
+
+    response = {
+        "task_id": task_id,
+        "status": task_result.status,
+        "created_at": task_result.created_at,
+        "updated_at": task_result.updated_at,
+    }
+
+    if task_result.status == "success" and task_result.result:
+        try:
+            response["result"] = json.loads(task_result.result)
+        except json.JSONDecodeError:
+            response["result"] = task_result.result
+
+    if task_result.status == "failure" and task_result.error:
+        response["error"] = task_result.error
+
+    if task_result.completed_at:
+        response["completed_at"] = task_result.completed_at
+
+    return response
 
 
 @router.get(
@@ -194,3 +228,4 @@ async def get_verification_report(
         "triggered_flags": val_res.get("triggered_flags", []),
         "tampering_signs": val_res.get("tampering_signs", [])
     }
+

@@ -87,7 +87,9 @@ async def squad_webhook(
 
     processed_transactions.add(transaction_ref)
 
-    # Update database
+    # Update database and get transaction details
+    email = None
+    amount_naira = 0.0
     with Session(engine) as session:
         statement = select(Transaction).where(
             Transaction.transaction_ref == transaction_ref
@@ -96,14 +98,25 @@ async def squad_webhook(
         if tx:
             tx.status = "success"
             tx.paid_at = datetime.utcnow()
+            email = tx.email
+            amount_naira = tx.amount_naira
             session.add(tx)
             session.commit()
+
+    # Queue payment confirmation email asynchronously
+    if email:
+        from app.tasks.email_tasks import send_payment_confirmation_task
+        send_payment_confirmation_task.delay(
+            email=email,
+            transaction_ref=transaction_ref,
+            amount=amount_naira
+        )
 
     return {"status": "success", "transaction_ref": transaction_ref}
 
 
 @router.get(
-    "/pay/callback",
+    "/paymentsuccess",
     summary="Payment Browser Callback",
     description="Landing redirect page for user following inline payment."
 )

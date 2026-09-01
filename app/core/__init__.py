@@ -3,7 +3,8 @@ Core module containing configuration, database setup, and security dependencies.
 """
 from app.core.config import settings
 from app.core.database import engine, get_session, init_db
-from app.core.security import get_current_user, get_optional_user
+from app.core.security import get_current_user, get_optional_user, get_admin_user
+from app.core.celery_app import celery_app
 
 __all__ = [
     "settings",
@@ -12,4 +13,6 @@ __all__ = [
     "init_db",
     "get_current_user",
     "get_optional_user",
+    "get_admin_user",
+    "celery_app",
 ]

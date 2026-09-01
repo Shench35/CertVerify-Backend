@@ -2,14 +2,14 @@ from pydantic import BaseModel, Field
 
 
 class RegisterRequest(BaseModel):
-    email: str = Field(..., example="user@example.com", description="User email address")
-    password: str = Field(..., min_length=6, example="SecurePassword123!", description="User password (min 6 chars)")
-    full_name: str | None = Field(None, example="John Doe", description="Display name")
+    email: str = Field(..., description="User email address", json_schema_extra={"example": "user@example.com"})
+    password: str = Field(..., min_length=6, description="User password (min 6 chars)", json_schema_extra={"example": "SecurePassword123!"})
+    full_name: str | None = Field(None, description="Display name", json_schema_extra={"example": "John Doe"})
 
 
 class LoginRequest(BaseModel):
-    email: str = Field(..., example="user@example.com")
-    password: str = Field(..., example="SecurePassword123!")
+    email: str = Field(..., json_schema_extra={"example": "user@example.com"})
+    password: str = Field(..., json_schema_extra={"example": "SecurePassword123!"})
 
 
 class RefreshTokenRequest(BaseModel):
@@ -17,7 +17,7 @@ class RefreshTokenRequest(BaseModel):
 
 
 class ForgotPasswordRequest(BaseModel):
-    email: str = Field(..., example="user@example.com")
+    email: str = Field(..., json_schema_extra={"example": "user@example.com"})
 
 
 class AuthResponse(BaseModel):

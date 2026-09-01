@@ -4,6 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import init_db
 from app.api.router import api_router
+# Import all models to ensure they are registered with SQLModel
+import app.models  # noqa: F401
 
 
 @asynccontextmanager
@@ -26,7 +28,7 @@ app = FastAPI(
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

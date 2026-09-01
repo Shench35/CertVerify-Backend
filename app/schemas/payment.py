@@ -4,8 +4,8 @@ from pydantic import BaseModel, Field
 
 
 class InitiatePaymentRequest(BaseModel):
-    amount_naira: float = Field(..., gt=0, example=2500.0, description="Amount in Naira")
-    email: Optional[str] = Field(None, example="user@example.com", description="User email (optional if using Bearer token)")
+    amount_naira: float = Field(..., gt=0, description="Amount in Naira", json_schema_extra={"example": 2500.0})
+    email: Optional[str] = Field(None, description="User email (optional if using Bearer token)", json_schema_extra={"example": "user@example.com"})
 
 
 class InitiatePaymentResponse(BaseModel):
