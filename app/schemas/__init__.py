@@ -14,7 +14,6 @@ from app.schemas.payment import (
 )
 from app.schemas.verification import (
     AnalyseResponse,
-    ScoreAssessmentResponse,
     VerificationHistoryItem,
     VerificationReportResponse
 )
@@ -36,7 +35,6 @@ __all__ = [
     "VerifyPaymentResponse",
     "TransactionResponse",
     "AnalyseResponse",
-    "ScoreAssessmentResponse",
     "VerificationHistoryItem",
     "VerificationReportResponse",
     "CreateApiKeyRequest",
