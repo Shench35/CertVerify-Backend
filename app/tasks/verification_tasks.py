@@ -55,7 +55,10 @@ def run_verification(
         # Run forensic validation pipeline
         result = validate_document(file_bytes, filename, cert_type)
 
-        document_score = result.get("document_score", 0)
+        document_score = result.get(
+            "document_score",
+            result.get("final_score", result.get("gemini_score", 0)),
+        )
         final_trust_score = document_score  # May be updated with knowledge_score later
         if final_trust_score >= 75:
             final_verdict = "AUTHENTIC"
@@ -161,7 +164,10 @@ def run_b2b_verification(
         file_bytes = bytes.fromhex(file_bytes_hex)
         result = validate_document(file_bytes, filename, cert_type)
 
-        document_score = result.get("document_score", 0)
+        document_score = result.get(
+            "document_score",
+            result.get("final_score", result.get("gemini_score", 0)),
+        )
         if document_score >= 75:
             final_verdict = "AUTHENTIC"
         elif document_score >= 40:

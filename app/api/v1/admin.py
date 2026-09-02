@@ -26,7 +26,7 @@ from app.services import admin_service
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["Admin"])
+router = APIRouter()
 
 
 # ─── Dashboard ───────────────────────────────────────────────

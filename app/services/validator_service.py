@@ -89,6 +89,7 @@ def validate_document(file_bytes: bytes, filename: str, selected_cert_type: str)
         "cert_type": selected_cert_type,
         "gemini_score": gemini_score,
         "total_penalty": total_penalty,
+        "document_score": final_score,
         "final_score": final_score,
         "verdict": verdict,
         "triggered_flags": flag_details,
