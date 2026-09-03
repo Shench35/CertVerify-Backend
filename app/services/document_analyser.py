@@ -56,6 +56,11 @@ def analyse_certificate(
         return {"success": False, "error": f"Could not process file: {str(e)}"}
 
     template = get_template(selected_cert_type)
+    subject_count_note = (
+        'The last row of the results table contains "SUBJECT RECORDED" followed by a word like "EIGHT" or "NINE" — this is the subject count, NOT a grade.'
+        if selected_cert_type.upper() == "WAEC"
+        else "Use the certificate type's own results-table layout; do not require the WAEC SUBJECT RECORDED row."
+    )
 
     prompt = f"""
 Task: You are an expert forensic document analyst specializing in Nigerian academic certificates with 20 years of experience verifying WAEC and NECO certificates.
@@ -76,7 +81,7 @@ REFERENCE STANDARDS:
 - Candidate photo expected: {template['has_candidate_photo']}
 - Colour scheme: {template['colour_scheme']}
 - Layout pattern: {template['layout']}
-- The last row of the results table contains "SUBJECT RECORDED" followed by a word like "EIGHT" or "NINE" — this is the subject count, NOT a grade.
+- {subject_count_note}
 
 SCORING GUIDELINES:
 - 90-100: Strongly authentic with minimal inconsistencies
