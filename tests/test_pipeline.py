@@ -5,6 +5,37 @@ from app.core.database import engine
 from app.models.transaction import Transaction
 
 
+def test_validator_exposes_final_score_as_document_score(monkeypatch):
+    from app.services import validator_service
+
+    monkeypatch.setattr(
+        validator_service,
+        "analyse_certificate",
+        lambda *_args: {
+            "success": True,
+            "authenticity_score": 92,
+            "extracted_info": {
+                "registration_number": "2410017335DI",
+                "exam_year": "2024",
+                "date_of_birth": "10/10/2005",
+                "subject_count": 9,
+                "subjects": [
+                    {"subject": "English Language", "grade": "C5", "remark": "CREDIT"}
+                ],
+            },
+            "field_checks": {},
+            "flagged_issues": [],
+            "tampering_signs": [],
+            "confidence_note": "",
+        },
+    )
+
+    result = validator_service.validate_document(b"document", "result.pdf", "NECO")
+
+    assert result["document_score"] == result["final_score"]
+    assert result["document_score"] == 92
+
+
 def test_analyse_unauthorized(client, sample_certificate_image):
     res = client.post(
         "/AI_pipeline/verify/analyse",
