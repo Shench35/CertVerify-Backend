@@ -20,3 +20,18 @@ def test_openapi_documentation(client):
     schema = response.json()
     assert "paths" in schema
     assert len(schema["paths"]) >= 10
+
+
+def test_admin_routes_use_single_openapi_tag(client):
+    schema = client.get("/openapi.json").json()
+
+    admin_operations = [
+        operation
+        for path, methods in schema["paths"].items()
+        if path.startswith("/admin/")
+        for method, operation in methods.items()
+        if method != "parameters"
+    ]
+
+    assert admin_operations
+    assert all(operation["tags"] == ["Admin Panel"] for operation in admin_operations)
