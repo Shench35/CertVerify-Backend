@@ -52,8 +52,9 @@ def test_analyse_without_payment(auth_client, sample_certificate_image):
         files={"file": ("cert.jpg", sample_certificate_image, "image/jpeg")},
         data={"cert_type": "WAEC"}
     )
-    # Either 402 (No payment) or 200 (if previous paid transaction in DB)
-    assert res.status_code in [200, 402]
+    # New users receive three daily verification credits without a payment.
+    assert res.status_code == 202
+    assert res.json()["credits_remaining"] >= 0
 
 
 def test_score_without_analyse_data(auth_client, mock_user):
