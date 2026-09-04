@@ -15,6 +15,8 @@ class Transaction(SQLModel, table=True):
     amount_naira: float
     amount_kobo: int
     status: str = Field(default="pending")
+    payment_plan: str | None = Field(default=None, index=True)
+    api_key: str | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     paid_at: datetime | None = Field(default=None)
 
