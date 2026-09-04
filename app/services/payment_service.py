@@ -6,18 +6,61 @@ from typing import Optional
 import httpx
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
+from sqlalchemy import update
 from app.core.config import settings
 from app.core.database import engine
 from app.models.transaction import Transaction
+from app.services.credit_service import activate_b2b_subscription, activate_user_subscription
 
-# In-memory deduplication set (backed up by DB transaction status check)
-processed_transactions = set()
+PLAN_PRICES_NAIRA = {
+    "user_monthly": 5000.0,
+    "b2b_monthly": 20000.0,
+}
+
+
+def mark_transaction_success(transaction_ref: str) -> tuple[Transaction | None, bool]:
+    """Atomically mark a pending transaction successful.
+
+    Returns the transaction and whether this call performed the state
+    transition. Only the caller that transitions the row may apply payment
+    side effects such as subscription activation and email delivery.
+    """
+    paid_at = datetime.utcnow()
+    with Session(engine) as session:
+        result = session.exec(
+            update(Transaction)
+            .where(
+                Transaction.transaction_ref == transaction_ref,
+                Transaction.status == "pending",
+            )
+            .values(status="success", paid_at=paid_at)
+        )
+        transitioned = result.rowcount == 1
+        session.commit()
+
+        transaction = session.exec(
+            select(Transaction).where(
+                Transaction.transaction_ref == transaction_ref
+            )
+        ).first()
+
+    return transaction, transitioned
+
+
+def apply_payment_success_side_effects(transaction: Transaction) -> None:
+    """Apply subscription activation after a successful state transition."""
+    if transaction.payment_plan == "user_monthly" and transaction.user_id:
+        activate_user_subscription(transaction.user_id, transaction.email)
+    elif transaction.payment_plan == "b2b_monthly" and transaction.api_key:
+        activate_b2b_subscription(transaction.api_key)
 
 
 async def initiate_squad_payment(
     amount_naira: float,
     email: str,
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None,
+    payment_plan: str = "user_monthly",
+    api_key: Optional[str] = None,
 ) -> dict:
     """Creates pending transaction and calls Squad payment initiation."""
     transaction_ref = str(uuid.uuid4())
@@ -29,7 +72,9 @@ async def initiate_squad_payment(
             email=email,
             amount_naira=amount_naira,
             amount_kobo=int(amount_naira * 100),
-            status="pending"
+            status="pending",
+            payment_plan=payment_plan,
+            api_key=api_key,
         )
         session.add(transaction)
         session.commit()
@@ -101,16 +146,9 @@ async def verify_squad_payment(transaction_ref: str) -> dict:
 
     tx_status = data["data"]["transaction_status"]
     if tx_status == "Success":
-        with Session(engine) as session:
-            statement = select(Transaction).where(
-                Transaction.transaction_ref == transaction_ref
-            )
-            tx = session.exec(statement).first()
-            if tx:
-                tx.status = "success"
-                tx.paid_at = datetime.utcnow()
-                session.add(tx)
-                session.commit()
+        tx, transitioned = mark_transaction_success(transaction_ref)
+        if tx and transitioned:
+            apply_payment_success_side_effects(tx)
 
     return {
         "paid": tx_status == "Success",

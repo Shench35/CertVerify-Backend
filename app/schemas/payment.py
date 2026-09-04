@@ -1,11 +1,13 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
 class InitiatePaymentRequest(BaseModel):
-    amount_naira: float = Field(..., gt=0, description="Amount in Naira", json_schema_extra={"example": 2500.0})
+    amount_naira: float = Field(..., gt=0, description="Amount in Naira", json_schema_extra={"example": 5000.0})
     email: Optional[str] = Field(None, description="User email (optional if using Bearer token)", json_schema_extra={"example": "user@example.com"})
+    plan: Literal["user_monthly", "b2b_monthly"] = Field(default="user_monthly")
+    api_key: Optional[str] = Field(default=None, description="Required for the B2B monthly plan")
 
 
 class InitiatePaymentResponse(BaseModel):

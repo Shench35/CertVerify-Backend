@@ -10,7 +10,8 @@ from app.services.payment_service import (
     initiate_squad_payment,
     verify_squad_payment,
     verify_webhook_signature,
-    processed_transactions
+    mark_transaction_success,
+    apply_payment_success_side_effects,
 )
 from app.core.security import get_current_user, get_optional_user
 from app.services.b2b_service import get_b2b_key_data
@@ -117,42 +118,21 @@ async def squad_webhook(
     if transaction_status != "Success":
         return {"status": "ignored", "reason": "transaction not successful"}
 
-    if transaction_ref in processed_transactions:
+    tx, transitioned = mark_transaction_success(transaction_ref)
+    if not tx:
+        return {"status": "ignored", "reason": "transaction not found"}
+    if not transitioned:
         return {"status": "ignored", "reason": "already processed"}
 
-    processed_transactions.add(transaction_ref)
-
-    # Update database and get transaction details
-    email = None
-    amount_naira = 0.0
-    with Session(engine) as session:
-        statement = select(Transaction).where(
-            Transaction.transaction_ref == transaction_ref
-        )
-        tx = session.exec(statement).first()
-        if tx:
-            tx.status = "success"
-            tx.paid_at = datetime.utcnow()
-            email = tx.email
-            amount_naira = tx.amount_naira
-            payment_plan = tx.payment_plan
-            api_key = tx.api_key
-            session.add(tx)
-            session.commit()
-            if payment_plan == "user_monthly" and tx.user_id:
-                from app.services.credit_service import activate_user_subscription
-                activate_user_subscription(tx.user_id, email)
-            elif payment_plan == "b2b_monthly" and api_key:
-                from app.services.credit_service import activate_b2b_subscription
-                activate_b2b_subscription(api_key)
+    apply_payment_success_side_effects(tx)
 
     # Queue payment confirmation email asynchronously
-    if email:
+    if tx.email:
         from app.tasks.email_tasks import send_payment_confirmation_task
         send_payment_confirmation_task.delay(
-            email=email,
+            email=tx.email,
             transaction_ref=transaction_ref,
-            amount=amount_naira
+            amount=tx.amount_naira
         )
 
     return {"status": "success", "transaction_ref": transaction_ref}
