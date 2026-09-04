@@ -9,10 +9,23 @@ from app.models.transaction import Transaction
 from app.models.task_result import TaskResult
 from app.core.security import get_current_user
 from app.tasks.verification_tasks import run_verification
+from app.services.credit_service import deduct_user_credit, get_user_credit_status
 
 router = APIRouter()
 
 ALLOWED_EXTENSIONS = {"image/jpeg", "image/png", "application/pdf"}
+
+
+@router.get("/credits", summary="Get Verification Credit Balance")
+async def get_credit_balance(current_user: dict = Depends(get_current_user)):
+    account = get_user_credit_status(current_user["uid"], current_user.get("email"))
+    return {
+        "credits": account.credits,
+        "daily_credit_limit": account.daily_credit_limit,
+        "subscription_plan": account.subscription_plan,
+        "subscription_expires_at": account.subscription_expires_at,
+        "credits_reset_at": account.credits_reset_at,
+    }
 
 
 @router.post(
@@ -40,32 +53,44 @@ async def analyse_certificate_endpoint(
             detail="Invalid file format. Only JPEG, PNG, and PDF are supported."
         )
 
-    # Verify paid transaction exists
+    # A supplied reference is optional, but if present it must belong to this user.
     with Session(engine) as session:
         if transaction_ref:
             statement = select(Transaction).where(
                 Transaction.transaction_ref == transaction_ref,
-                Transaction.status == "success"
+                Transaction.status == "success",
+                (Transaction.user_id == user_id) | (Transaction.email == email)
             )
         else:
-            statement = (
-                select(Transaction)
-                .where(
-                    (Transaction.user_id == user_id) | (Transaction.email == email),
-                    Transaction.status == "success",
-                    Transaction.verification_result == None
-                )
-                .order_by(Transaction.created_at.desc())
-            )
+            statement = select(Transaction).where(Transaction.transaction_ref == "__new__")
         transaction = session.exec(statement).first()
 
-    if not transaction:
+    if transaction_ref and not transaction:
         raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail="No confirmed paid transaction found. Please complete payment before running verification."
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Paid transaction not found for this account."
         )
 
-    active_transaction_ref = transaction.transaction_ref
+    deducted, remaining_credits = deduct_user_credit(user_id, email)
+    if not deducted:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="No verification credits remaining. Please wait for the daily reset or subscribe."
+        )
+
+    active_transaction_ref = transaction.transaction_ref if transaction else str(uuid.uuid4())
+    if not transaction:
+        with Session(engine) as session:
+            transaction = Transaction(
+                transaction_ref=active_transaction_ref,
+                user_id=user_id,
+                email=email or "",
+                amount_naira=0,
+                amount_kobo=0,
+                status="success",
+            )
+            session.add(transaction)
+            session.commit()
     file_bytes = await file.read()
     filename = file.filename
 
@@ -97,6 +122,7 @@ async def analyse_certificate_endpoint(
         "task_id": task_id,
         "status": "pending",
         "transaction_ref": active_transaction_ref,
+        "credits_remaining": remaining_credits,
         "message": "Verification queued. Poll the status endpoint to check progress."
     }
 

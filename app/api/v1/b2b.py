@@ -10,7 +10,7 @@ from app.services.b2b_service import (
     get_b2b_key_data
 )
 from app.services.validator_service import validate_document
-from app.core.security import get_current_user, get_optional_user
+from app.core.security import get_current_user
 
 router = APIRouter()
 
@@ -23,10 +23,10 @@ router = APIRouter()
 )
 async def generate_key(
     payload: CreateApiKeyRequest,
-    current_user: Optional[dict] = Depends(get_optional_user)
+    current_user: dict = Depends(get_current_user)
 ):
-    user_id = current_user.get("uid") if current_user else None
-    email = (current_user.get("email") if current_user else None) or payload.email
+    user_id = current_user.get("uid")
+    email = current_user.get("email") or payload.email
 
     if not email:
         raise HTTPException(
@@ -80,21 +80,14 @@ async def list_keys(current_user: dict = Depends(get_current_user)):
     summary="Top-Up API Key Credits",
     description="Adds credits to an existing API key."
 )
-async def top_up_credits(payload: AddCreditsRequest):
-    key_record = get_b2b_key_data(payload.api_key)
-    if not key_record:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="API key not found."
-        )
-
-    new_balance = add_b2b_credits(payload.api_key, payload.credits)
-    return {
-        "api_key": payload.api_key,
-        "credits_added": payload.credits,
-        "new_balance": new_balance,
-        "message": f"Successfully added {payload.credits} credits."
-    }
+async def top_up_credits(
+    payload: AddCreditsRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Manual credit top-ups are disabled. Purchase the B2B monthly subscription for 1,000 credits.",
+    )
 
 
 @router.post(

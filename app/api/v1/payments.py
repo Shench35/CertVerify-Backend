@@ -13,6 +13,8 @@ from app.services.payment_service import (
     processed_transactions
 )
 from app.core.security import get_current_user, get_optional_user
+from app.services.b2b_service import get_b2b_key_data
+from app.services.payment_service import PLAN_PRICES_NAIRA
 
 router = APIRouter()
 
@@ -36,10 +38,27 @@ async def initiate_payment(
             detail="Email address is required to initiate payment."
         )
 
+    expected_amount = PLAN_PRICES_NAIRA[payload.plan]
+    if payload.amount_naira != expected_amount:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{payload.plan} costs {expected_amount:.0f} Naira."
+        )
+    if payload.plan == "user_monthly" and not current_user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login is required for a user subscription.")
+    if payload.plan == "b2b_monthly":
+        if not current_user or not payload.api_key:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login and an API key are required for a B2B subscription.")
+        key = get_b2b_key_data(payload.api_key)
+        if not key or key.user_id != current_user.get("uid"):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="The API key does not belong to this account.")
+
     res = await initiate_squad_payment(
         amount_naira=payload.amount_naira,
         email=email,
-        user_id=user_id
+        user_id=user_id,
+        payment_plan=payload.plan,
+        api_key=payload.api_key,
     )
     return res
 
@@ -50,7 +69,25 @@ async def initiate_payment(
     summary="Verify Payment",
     description="Checks payment confirmation with Squad API and updates database."
 )
-async def verify_payment(transaction_ref: str):
+async def verify_payment(
+    transaction_ref: str,
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user.get("uid")
+    with Session(engine) as session:
+        transaction = session.exec(
+            select(Transaction).where(
+                Transaction.transaction_ref == transaction_ref,
+                Transaction.user_id == user_id,
+            )
+        ).first()
+
+    if not transaction:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Payment transaction not found.",
+        )
+
     res = await verify_squad_payment(transaction_ref)
     return res
 
@@ -66,10 +103,8 @@ async def squad_webhook(
 ):
     body_bytes = await request.body()
 
-    # Validate HMAC signature if provided
-    if x_squad_encrypted_body:
-        if not verify_webhook_signature(body_bytes, x_squad_encrypted_body):
-            return {"status": "rejected", "reason": "invalid signature"}
+    if not verify_webhook_signature(body_bytes, x_squad_encrypted_body):
+        return {"status": "rejected", "reason": "invalid signature"}
 
     payload = json.loads(body_bytes)
     if payload.get("Event") != "charge_successful":
@@ -100,8 +135,16 @@ async def squad_webhook(
             tx.paid_at = datetime.utcnow()
             email = tx.email
             amount_naira = tx.amount_naira
+            payment_plan = tx.payment_plan
+            api_key = tx.api_key
             session.add(tx)
             session.commit()
+            if payment_plan == "user_monthly" and tx.user_id:
+                from app.services.credit_service import activate_user_subscription
+                activate_user_subscription(tx.user_id, email)
+            elif payment_plan == "b2b_monthly" and api_key:
+                from app.services.credit_service import activate_b2b_subscription
+                activate_b2b_subscription(api_key)
 
     # Queue payment confirmation email asynchronously
     if email:
