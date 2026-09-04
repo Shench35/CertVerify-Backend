@@ -7,6 +7,7 @@ from google.auth.exceptions import TransportError
 from requests.exceptions import RequestException
 from app.core.config import settings
 from app.core.firebase import initialize_firebase
+from app.services.credit_service import ensure_user_credit_account
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ async def register_user(email: str, password: str, display_name: str | None = No
             display_name=display_name,
             email_verified=False
         )
+        ensure_user_credit_account(user_record.uid, user_record.email)
         return {
             "uid": user_record.uid,
             "email": user_record.email,
@@ -108,6 +110,7 @@ async def login_user(email: str, password: str) -> dict:
                 detail=f"Authentication failed: {error_msg}"
             )
 
+    ensure_user_credit_account(data.get("localId"), data.get("email"))
     return {
         "access_token": data.get("idToken"),
         "refresh_token": data.get("refreshToken"),
