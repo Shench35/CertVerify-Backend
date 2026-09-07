@@ -1,18 +1,22 @@
-from typing import Optional
+import logging
+import uuid
 from fastapi import APIRouter, HTTPException, File, UploadFile, Form, Header, Depends, status
 from app.schemas.b2b import CreateApiKeyRequest, AddCreditsRequest
 from app.services.b2b_service import (
     create_b2b_key,
     deduct_b2b_credit,
+    restore_b2b_credit,
     add_b2b_credits,
     get_b2b_balance,
     get_user_b2b_keys,
     get_b2b_key_data
 )
-from app.services.validator_service import validate_document
 from app.core.security import get_current_user
+from app.tasks.verification_tasks import run_b2b_verification
+from app.services.upload_validation import read_and_validate_upload
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post(
@@ -92,6 +96,7 @@ async def top_up_credits(
 
 @router.post(
     "/verify",
+    status_code=status.HTTP_202_ACCEPTED,
     summary="B2B Certificate Forensic Verification",
     description="Direct verification endpoint for third-party systems using API key authentication."
 )
@@ -113,12 +118,7 @@ async def verify_certificate_b2b(
             detail="No verification credits remaining. Please purchase or top up credits."
         )
 
-    allowed = {"image/jpeg", "image/png", "application/pdf"}
-    if file.content_type not in allowed:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid file format. Only JPEG, PNG, and PDF are supported."
-        )
+    file_bytes = await read_and_validate_upload(file)
 
     # Atomic credit deduction
     deducted = deduct_b2b_credit(x_api_key)
@@ -128,10 +128,30 @@ async def verify_certificate_b2b(
             detail="Could not deduct verification credit. Insufficient balance."
         )
 
-    file_bytes = await file.read()
-    filename = file.filename
+    task_id = str(uuid.uuid4())
+    try:
+        filename = file.filename or "certificate"
+        run_b2b_verification.apply_async(
+            args=[file_bytes.hex(), filename, cert_type, x_api_key],
+            task_id=task_id,
+            countdown=0,
+        )
+    except Exception:
+        try:
+            restored = restore_b2b_credit(x_api_key)
+        except Exception:
+            restored = False
+            logger.exception("Failed to restore B2B credit after queue failure")
+        if not restored:
+            logger.error("B2B credit restoration was not confirmed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Verification could not be queued. No credit was consumed.",
+        )
 
-    result = validate_document(file_bytes, filename, cert_type)
-    result["credits_remaining"] = get_b2b_balance(x_api_key)
-
-    return result
+    return {
+        "task_id": task_id,
+        "status": "pending",
+        "credits_remaining": get_b2b_balance(x_api_key),
+        "message": "Verification queued. Retrieve the task result from the Celery result backend.",
+    }

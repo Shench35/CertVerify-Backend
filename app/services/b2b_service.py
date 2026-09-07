@@ -93,6 +93,28 @@ def deduct_b2b_credit(api_key: str) -> bool:
         return result.rowcount > 0
 
 
+def restore_b2b_credit(api_key: str) -> bool:
+    """Restore one credit when a B2B verification cannot be queued."""
+    now = datetime.utcnow()
+    statement = (
+        update(ApiKey)
+        .where(
+            ApiKey.api_key == api_key,
+            ApiKey.credits < ApiKey.daily_credit_limit,
+        )
+        .values(
+            credits=ApiKey.credits + 1,
+            updated_at=now,
+        )
+    )
+
+    with Session(engine) as session:
+        result = session.exec(statement)
+        session.commit()
+
+    return result.rowcount > 0
+
+
 def add_b2b_credits(api_key: str, amount: int) -> int:
     """Atomically adds credits to an API key."""
     with Session(engine) as session:

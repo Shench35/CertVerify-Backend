@@ -3,6 +3,7 @@ import uuid
 from sqlmodel import Session
 from app.core.database import engine
 from app.models.transaction import Transaction
+from app.services.credit_service import get_user_credit_status
 
 
 def test_validator_exposes_final_score_as_document_score(monkeypatch):
@@ -55,6 +56,51 @@ def test_analyse_without_payment(auth_client, sample_certificate_image):
     # New users receive three daily verification credits without a payment.
     assert res.status_code == 202
     assert res.json()["credits_remaining"] >= 0
+
+
+def test_analyse_rejects_mismatched_file_content(auth_client, sample_certificate_image):
+    response = auth_client.post(
+        "/AI_pipeline/verify/analyse",
+        files={"file": ("cert.jpg", b"not an image", "image/jpeg")},
+        data={"cert_type": "WAEC"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_analyse_rejects_oversized_upload(auth_client, monkeypatch):
+    from app.services import upload_validation
+
+    monkeypatch.setattr(upload_validation, "MAX_UPLOAD_BYTES", 4)
+    response = auth_client.post(
+        "/AI_pipeline/verify/analyse",
+        files={"file": ("cert.jpg", b"\xff\xd8\xff\x00\x00", "image/jpeg")},
+        data={"cert_type": "WAEC"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_analyse_restores_credit_when_dispatch_fails(
+    auth_client, sample_certificate_image, monkeypatch, mock_user
+):
+    from app.api.v1 import verification
+
+    before = get_user_credit_status(mock_user["uid"], mock_user["email"]).credits
+    monkeypatch.setattr(
+        verification.run_verification,
+        "apply_async",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("broker unavailable")),
+    )
+
+    res = auth_client.post(
+        "/AI_pipeline/verify/analyse",
+        files={"file": ("cert.jpg", sample_certificate_image, "image/jpeg")},
+        data={"cert_type": "WAEC"},
+    )
+
+    assert res.status_code == 503
+    assert get_user_credit_status(mock_user["uid"], mock_user["email"]).credits == before
 
 
 def test_score_without_analyse_data(auth_client, mock_user):

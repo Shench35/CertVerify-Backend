@@ -101,8 +101,31 @@ def deduct_user_credit(user_id: str, email: str | None) -> tuple[bool, int]:
             select(UserCreditAccount).where(UserCreditAccount.user_id == user_id)
         ).first()
         session.commit()
+        remaining_credits = account.credits if account else 0
 
-    return result.rowcount > 0, account.credits if account else 0
+    return result.rowcount > 0, remaining_credits
+
+
+def restore_user_credit(user_id: str) -> bool:
+    """Restore one credit after a verification could not be queued."""
+    now = datetime.utcnow()
+    statement = (
+        update(UserCreditAccount)
+        .where(
+            UserCreditAccount.user_id == user_id,
+            UserCreditAccount.credits < UserCreditAccount.daily_credit_limit,
+        )
+        .values(
+            credits=UserCreditAccount.credits + 1,
+            updated_at=now,
+        )
+    )
+
+    with Session(engine) as session:
+        result = session.exec(statement)
+        session.commit()
+
+    return result.rowcount > 0
 
 
 def activate_user_subscription(user_id: str, email: str | None) -> UserCreditAccount:

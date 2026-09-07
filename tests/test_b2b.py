@@ -53,15 +53,43 @@ def test_b2b_key_lifecycle(auth_client, mock_user):
     assert get_b2b_balance(api_key) == 2
 
 
+def test_b2b_verification_is_queued(auth_client, sample_certificate_image, monkeypatch):
+    from app.api.v1 import b2b
+
+    key_response = auth_client.post(
+        "/third_party/api/v1/keys/generate",
+        json={"name": "Queue Test Key"},
+    )
+    api_key = key_response.json()["api_key"]
+    queued = {}
+
+    def fake_apply_async(*, args, task_id, countdown):
+        queued.update(args=args, task_id=task_id, countdown=countdown)
+
+    monkeypatch.setattr(b2b.run_b2b_verification, "apply_async", fake_apply_async)
+    response = auth_client.post(
+        "/third_party/api/v1/verify",
+        headers={"X-API-Key": api_key},
+        files={"file": ("cert.jpg", sample_certificate_image, "image/jpeg")},
+        data={"cert_type": "WAEC"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "pending"
+    assert queued["args"][0] == sample_certificate_image.hex()
+    assert queued["args"][2] == "WAEC"
+
+
 def test_user_credits_reset_and_subscription_expiry():
     user_id = f"credit-test-{uuid.uuid4().hex}"
     email = f"{user_id}@example.com"
 
     account = ensure_user_credit_account(user_id, email)
     assert account.credits == 3
-    for _ in range(3):
-        assert deduct_user_credit(user_id, email)[0] is True
-    assert deduct_user_credit(user_id, email)[0] is False
+    assert deduct_user_credit(user_id, email) == (True, 2)
+    assert deduct_user_credit(user_id, email) == (True, 1)
+    assert deduct_user_credit(user_id, email) == (True, 0)
+    assert deduct_user_credit(user_id, email) == (False, 0)
 
     with Session(engine) as session:
         account = session.get(UserCreditAccount, account.id)

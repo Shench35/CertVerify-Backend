@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from typing import Optional
 from datetime import datetime
@@ -9,12 +10,15 @@ from app.models.transaction import Transaction
 from app.models.task_result import TaskResult
 from app.core.security import get_current_user
 from app.tasks.verification_tasks import run_verification
-from app.services.credit_service import deduct_user_credit, get_user_credit_status
+from app.services.credit_service import (
+    deduct_user_credit,
+    get_user_credit_status,
+    restore_user_credit,
+)
+from app.services.upload_validation import read_and_validate_upload
 
 router = APIRouter()
-
-ALLOWED_EXTENSIONS = {"image/jpeg", "image/png", "application/pdf"}
-
+logger = logging.getLogger(__name__)
 
 @router.get("/credits", summary="Get Verification Credit Balance")
 async def get_credit_balance(current_user: dict = Depends(get_current_user)):
@@ -47,11 +51,7 @@ async def analyse_certificate_endpoint(
     user_id = current_user.get("uid")
     email = current_user.get("email")
 
-    if file.content_type not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid file format. Only JPEG, PNG, and PDF are supported."
-        )
+    file_bytes = await read_and_validate_upload(file)
 
     # A supplied reference is optional, but if present it must belong to this user.
     with Session(engine) as session:
@@ -79,44 +79,84 @@ async def analyse_certificate_endpoint(
         )
 
     active_transaction_ref = transaction.transaction_ref if transaction else str(uuid.uuid4())
-    if not transaction:
-        with Session(engine) as session:
-            transaction = Transaction(
-                transaction_ref=active_transaction_ref,
-                user_id=user_id,
-                email=email or "",
-                amount_naira=0,
-                amount_kobo=0,
-                status="success",
-            )
-            session.add(transaction)
-            session.commit()
-    file_bytes = await file.read()
-    filename = file.filename
-
-    # Convert file bytes to hex for JSON-safe transmission to Celery
-    file_bytes_hex = file_bytes.hex()
-
-    # Create TaskResult record with pending status
     task_id = str(uuid.uuid4())
-    task_result = TaskResult(
-        task_id=task_id,
-        task_type="verification",
-        status="pending",
-        user_id=user_id,
-        transaction_ref=active_transaction_ref
-    )
+    transaction_created = False
+    task_created = False
 
-    with Session(engine) as session:
-        session.add(task_result)
-        session.commit()
+    try:
+        if not transaction:
+            with Session(engine) as session:
+                transaction = Transaction(
+                    transaction_ref=active_transaction_ref,
+                    user_id=user_id,
+                    email=email or "",
+                    amount_naira=0,
+                    amount_kobo=0,
+                    status="success",
+                )
+                session.add(transaction)
+                session.commit()
+            transaction_created = True
 
-    # Dispatch to Celery with task_id
-    run_verification.apply_async(
-        args=[file_bytes_hex, filename, cert_type, active_transaction_ref, email],
-        task_id=task_id,
-        countdown=0
-    )
+        filename = file.filename
+
+        # Convert file bytes to hex for JSON-safe transmission to Celery
+        file_bytes_hex = file_bytes.hex()
+
+        task_result = TaskResult(
+            task_id=task_id,
+            task_type="verification",
+            status="pending",
+            user_id=user_id,
+            transaction_ref=active_transaction_ref
+        )
+
+        with Session(engine) as session:
+            session.add(task_result)
+            session.commit()
+        task_created = True
+
+        run_verification.apply_async(
+            args=[file_bytes_hex, filename, cert_type, active_transaction_ref, email],
+            task_id=task_id,
+            countdown=0
+        )
+    except Exception:
+        try:
+            if task_created or transaction_created:
+                with Session(engine) as session:
+                    if task_created:
+                        queued_task = session.exec(
+                            select(TaskResult).where(TaskResult.task_id == task_id)
+                        ).first()
+                        if queued_task and queued_task.status == "pending":
+                            session.delete(queued_task)
+                    if transaction_created:
+                        created_transaction = session.exec(
+                            select(Transaction).where(
+                                Transaction.transaction_ref == active_transaction_ref,
+                                Transaction.user_id == user_id,
+                                Transaction.status == "success",
+                                Transaction.verification_result == None,
+                            )
+                        ).first()
+                        if created_transaction:
+                            session.delete(created_transaction)
+                    session.commit()
+        except Exception:
+            logger.exception("Failed to clean up verification queue records")
+
+        try:
+            restored = restore_user_credit(user_id)
+        except Exception:
+            restored = False
+            logger.exception("Failed to restore credit for user %s after queue failure", user_id)
+        if not restored:
+            logger.error("Credit restoration was not confirmed for user %s", user_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Verification could not be queued. No credit was consumed.",
+        )
 
     return {
         "task_id": task_id,
