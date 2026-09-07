@@ -9,6 +9,14 @@ from datetime import datetime
 from app.core.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+VERIFICATION_MAX_RETRIES = 2
+
+
+def _task_failure_state(retries: int) -> tuple[str, datetime | None]:
+    """Return the externally visible state for the current retry attempt."""
+    if retries < VERIFICATION_MAX_RETRIES:
+        return "retrying", None
+    return "failure", datetime.utcnow()
 
 
 @celery_app.task(bind=True, name="app.tasks.verification_tasks.run_verification")
@@ -128,21 +136,31 @@ def run_verification(
 
     except Exception as e:
         logger.error(f"Verification task failed for {transaction_ref}: {e}")
-        
-        # Update TaskResult with failure status
+
+        retries = getattr(self.request, "retries", 0)
+        task_status, completed_at = _task_failure_state(retries)
+        will_retry = task_status == "retrying"
+
+        # Keep retrying tasks non-terminal so clients do not see a false failure.
         with Session(engine) as session:
             task_result = session.exec(
                 select(TaskResult).where(TaskResult.task_id == task_id)
             ).first()
             if task_result:
-                task_result.status = "failure"
+                task_result.status = task_status
                 task_result.error = str(e)
                 task_result.updated_at = datetime.utcnow()
-                task_result.completed_at = datetime.utcnow()
+                task_result.completed_at = completed_at
                 session.add(task_result)
                 session.commit()
-        
-        raise self.retry(exc=e, countdown=120, max_retries=2)
+
+        if will_retry:
+            raise self.retry(
+                exc=e,
+                countdown=120,
+                max_retries=VERIFICATION_MAX_RETRIES,
+            )
+        raise
 
 
 

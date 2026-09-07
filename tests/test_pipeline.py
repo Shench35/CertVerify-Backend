@@ -37,6 +37,16 @@ def test_validator_exposes_final_score_as_document_score(monkeypatch):
     assert result["document_score"] == 92
 
 
+def test_verification_retry_state_is_not_terminal_until_exhausted():
+    from app.tasks.verification_tasks import _task_failure_state
+
+    assert _task_failure_state(0) == ("retrying", None)
+    assert _task_failure_state(1) == ("retrying", None)
+    status, completed_at = _task_failure_state(2)
+    assert status == "failure"
+    assert completed_at is not None
+
+
 def test_analyse_unauthorized(client, sample_certificate_image):
     res = client.post(
         "/AI_pipeline/verify/analyse",

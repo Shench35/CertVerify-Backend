@@ -15,7 +15,7 @@ class TaskResult(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     task_id: str = Field(index=True, unique=True)
     task_type: str = Field(index=True)
-    status: str = Field(default="pending", index=True)  # pending, started, success, failure
+    status: str = Field(default="pending", index=True)  # pending, started, retrying, success, failure
     user_id: str | None = Field(default=None, index=True)
     transaction_ref: str | None = Field(default=None, index=True)
     result: str | None = Field(default=None, sa_column=Column(Text))  # JSON stringified
