@@ -1,10 +1,9 @@
-import google.generativeai as genai
+from google import genai
 from app.core.config import settings
 from app.services.validator_service import validate_document
 from app.services.document_analyser import parse_gemini_response
 
-genai.configure(api_key=settings.GEMINI_API_KEY)
-examiner_model = genai.GenerativeModel(settings.GEMINI_EXAMINER_MODEL)
+client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
 
 def generate_questions(file_bytes: bytes, filename: str, selected_cert_type: str) -> dict:
@@ -69,7 +68,10 @@ JSON RESPONSE FORMAT:
 }}
 """
     try:
-        gemini_response = examiner_model.generate_content(prompt)
+        gemini_response = client.models.generate_content(
+            model=settings.GEMINI_EXAMINER_MODEL,
+            contents=prompt,
+        )
         result = parse_gemini_response(gemini_response.text)
         return result
     except Exception as e:
@@ -118,7 +120,10 @@ JSON RESPONSE FORMAT:
 }}
 """
     try:
-        response = examiner_model.generate_content(prompt)
+        response = client.models.generate_content(
+            model=settings.GEMINI_EXAMINER_MODEL,
+            contents=prompt,
+        )
         result = parse_gemini_response(response.text)
         result["success"] = True
         return result

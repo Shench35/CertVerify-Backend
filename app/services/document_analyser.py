@@ -2,14 +2,13 @@ import io
 import re
 import json
 from pathlib import Path
-import google.generativeai as genai
+from google import genai
 from PIL import Image
 import fitz  # PyMuPDF
 from app.core.config import settings
 from app.services.template_service import get_template
 
-genai.configure(api_key=settings.GEMINI_API_KEY)
-model = genai.GenerativeModel(settings.GEMINI_MODEL)
+client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
 
 def load_image_from_upload(file_bytes: bytes, filename: str) -> Image.Image:
@@ -39,7 +38,10 @@ def parse_gemini_response(response_text: str) -> dict:
         Fix the following invalid JSON string and return ONLY valid JSON with no markdown:
         {cleaned}
         """
-        fixed = model.generate_content(fix_prompt)
+        fixed = client.models.generate_content(
+            model=settings.GEMINI_MODEL,
+            contents=fix_prompt,
+        )
         cleaned_fixed = re.sub(r'```json|```', '', fixed.text).strip()
         return json.loads(cleaned_fixed)
 
@@ -128,7 +130,10 @@ JSON RESPONSE FORMAT:
 }}
 """
     try:
-        response = model.generate_content([prompt, image])
+        response = client.models.generate_content(
+            model=settings.GEMINI_MODEL,
+            contents=[prompt, image],
+        )
         result = parse_gemini_response(response.text)
     except Exception as e:
         return {"success": False, "error": f"AI analysis error: {str(e)}"}
