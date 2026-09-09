@@ -78,6 +78,16 @@ def test_analyse_rejects_mismatched_file_content(auth_client, sample_certificate
     assert response.status_code == 400
 
 
+def test_analyse_rejects_invalid_cert_type(auth_client, sample_certificate_image):
+    response = auth_client.post(
+        "/AI_pipeline/verify/analyse",
+        files={"file": ("cert.jpg", sample_certificate_image, "image/jpeg")},
+        data={"cert_type": "INVALID_TYPE"},
+    )
+    assert response.status_code == 422
+
+
+
 def test_analyse_rejects_oversized_upload(auth_client, monkeypatch):
     from app.services import upload_validation
 
@@ -124,3 +134,71 @@ def test_score_without_analyse_data(auth_client, mock_user):
         }
     )
     assert res.status_code in [400, 404]
+
+
+def test_verification_history_and_report_enforce_strict_user_id(auth_client, mock_user):
+    ref_owner = str(uuid.uuid4())
+    ref_other_user = str(uuid.uuid4())
+    ref_unassigned = str(uuid.uuid4())
+
+    with Session(engine) as session:
+        session.add(Transaction(
+            transaction_ref=ref_owner,
+            user_id=mock_user["uid"],
+            email=mock_user["email"],
+            amount_naira=0,
+            amount_kobo=0,
+            status="success",
+            cert_type="WAEC",
+            document_score=88.0,
+            final_trust_score=88.0,
+            final_verdict="AUTHENTIC",
+            verification_result=json.dumps({"extracted_info": {"candidate_name": "Owner"}}),
+        ))
+        session.add(Transaction(
+            transaction_ref=ref_other_user,
+            user_id="another-user-uid",
+            email=mock_user["email"],
+            amount_naira=0,
+            amount_kobo=0,
+            status="success",
+            cert_type="WAEC",
+            document_score=50.0,
+            final_trust_score=50.0,
+            final_verdict="SUSPICIOUS",
+            verification_result=json.dumps({"extracted_info": {"candidate_name": "Other"}}),
+        ))
+        session.add(Transaction(
+            transaction_ref=ref_unassigned,
+            user_id=None,
+            email=mock_user["email"],
+            amount_naira=0,
+            amount_kobo=0,
+            status="success",
+            cert_type="NECO",
+            document_score=90.0,
+            final_trust_score=90.0,
+            final_verdict="AUTHENTIC",
+            verification_result=json.dumps({"extracted_info": {"candidate_name": "Unassigned"}}),
+        ))
+        session.commit()
+
+    # 1. History endpoint only returns owner's transaction
+    hist_res = auth_client.get("/AI_pipeline/verify/history")
+    assert hist_res.status_code == 200
+    refs = [v["transaction_ref"] for v in hist_res.json()["verifications"]]
+    assert ref_owner in refs
+    assert ref_other_user not in refs
+    assert ref_unassigned not in refs
+
+    # 2. Report endpoint allows access only for owner
+    rep_owner = auth_client.get(f"/AI_pipeline/verify/report/{ref_owner}")
+    assert rep_owner.status_code == 200
+    assert rep_owner.json()["transaction_ref"] == ref_owner
+
+    rep_other = auth_client.get(f"/AI_pipeline/verify/report/{ref_other_user}")
+    assert rep_other.status_code == 404
+
+    rep_unassigned = auth_client.get(f"/AI_pipeline/verify/report/{ref_unassigned}")
+    assert rep_unassigned.status_code == 404
+

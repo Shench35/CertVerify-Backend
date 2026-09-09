@@ -10,7 +10,8 @@ from app.services.b2b_service import (
     deduct_b2b_credit,
     add_b2b_credits,
     get_b2b_balance,
-    get_b2b_key_data
+    get_b2b_key_data,
+    mask_api_key,
 )
 from app.services.credit_service import (
     activate_b2b_subscription,
@@ -22,23 +23,30 @@ from app.services.credit_service import (
 
 
 def test_b2b_key_lifecycle(auth_client, mock_user):
-    # 1. Generate Key via API
+    # 1. Generate Key via API — full secret returned once
     key_name = f"Test Integration Key {uuid.uuid4().hex[:6]}"
     res = auth_client.post(
         "/third_party/api/v1/keys/generate",
-        json={"name": key_name, "initial_credits": 999}
+        json={"name": key_name}
     )
     assert res.status_code == 201
     data = res.json()
     api_key = data["api_key"]
+    key_id = data["id"]
     assert api_key.startswith("cvfy_")
     assert data["credits"] == 3
+    assert data["masked_key"] == mask_api_key(api_key)
 
-    # 2. List Keys via API
+    # 2. List Keys via API — secrets must be MASKED
     res_list = auth_client.get("/third_party/api/v1/keys")
     assert res_list.status_code == 200
     keys = res_list.json()["api_keys"]
-    assert any(k["api_key"] == api_key for k in keys)
+    # Plain bearer key must NEVER appear in list output
+    assert not any(k.get("api_key") == api_key for k in keys)
+    # Masked key must match
+    matching = [k for k in keys if k["id"] == key_id]
+    assert len(matching) == 1
+    assert matching[0]["masked_key"] == mask_api_key(api_key)
 
     # 3. Arbitrary top-ups are disabled; subscriptions control paid credits.
     res_topup = auth_client.post(
@@ -51,6 +59,106 @@ def test_b2b_key_lifecycle(auth_client, mock_user):
     deducted = deduct_b2b_credit(api_key)
     assert deducted is True
     assert get_b2b_balance(api_key) == 2
+
+
+def test_b2b_keys_list_excludes_same_email_other_user_id(auth_client, mock_user):
+    # Key created with same email but belonging to another user_id or NULL user_id
+    other_key_val = f"cvfy_{uuid.uuid4().hex}"
+    null_key_val = f"cvfy_{uuid.uuid4().hex}"
+
+    with Session(engine) as session:
+        session.add(ApiKey(
+            api_key=other_key_val,
+            user_id="other-user-999",
+            email=mock_user["email"],
+            name="Other User Key",
+            credits=3,
+        ))
+        session.add(ApiKey(
+            api_key=null_key_val,
+            user_id=None,
+            email=mock_user["email"],
+            name="Unclaimed Key",
+            credits=3,
+        ))
+        session.commit()
+
+    # Keys list strictly queries by user_id and MUST NOT include keys owned by another/null user_id
+    res = auth_client.get("/third_party/api/v1/keys")
+    assert res.status_code == 200
+    listed_masked = [k["masked_key"] for k in res.json()["api_keys"]]
+    assert mask_api_key(other_key_val) not in listed_masked
+    assert mask_api_key(null_key_val) not in listed_masked
+
+
+def test_b2b_key_rotation(auth_client, mock_user):
+    # Create key
+    gen_res = auth_client.post(
+        "/third_party/api/v1/keys/generate",
+        json={"name": "Key to Rotate"}
+    )
+    assert gen_res.status_code == 201
+    old_key = gen_res.json()["api_key"]
+    key_id = gen_res.json()["id"]
+
+    # Rotate key
+    rot_res = auth_client.post(f"/third_party/api/v1/keys/{key_id}/rotate")
+    assert rot_res.status_code == 200
+    rot_data = rot_res.json()
+    new_key = rot_data["api_key"]
+
+    assert new_key != old_key
+    assert new_key.startswith("cvfy_")
+    assert rot_data["masked_key"] == mask_api_key(new_key)
+
+    # Old key is no longer valid in database
+    assert get_b2b_key_data(old_key) is None
+    # New key is active with existing credits
+    new_key_data = get_b2b_key_data(new_key)
+    assert new_key_data is not None
+    assert new_key_data.is_active is True
+    assert new_key_data.credits == 3
+
+
+def test_b2b_key_revocation(auth_client, sample_certificate_image):
+    # Create key
+    gen_res = auth_client.post(
+        "/third_party/api/v1/keys/generate",
+        json={"name": "Key to Revoke"}
+    )
+    api_key = gen_res.json()["api_key"]
+    key_id = gen_res.json()["id"]
+
+    # Revoke key via DELETE
+    rev_res = auth_client.delete(f"/third_party/api/v1/keys/{key_id}")
+    assert rev_res.status_code == 200
+    assert rev_res.json()["success"] is True
+
+    # Verification using revoked key fails with 401
+    ver_res = auth_client.post(
+        "/third_party/api/v1/verify",
+        headers={"X-API-Key": api_key},
+        files={"file": ("cert.jpg", sample_certificate_image, "image/jpeg")},
+        data={"cert_type": "WAEC"},
+    )
+    assert ver_res.status_code == 401
+
+
+def test_b2b_verify_rejects_invalid_cert_type(auth_client, sample_certificate_image):
+    gen_res = auth_client.post(
+        "/third_party/api/v1/keys/generate",
+        json={"name": "Type Validation Key"}
+    )
+    api_key = gen_res.json()["api_key"]
+
+    res = auth_client.post(
+        "/third_party/api/v1/verify",
+        headers={"X-API-Key": api_key},
+        files={"file": ("cert.jpg", sample_certificate_image, "image/jpeg")},
+        data={"cert_type": "CAMBRIDGE"},
+    )
+    assert res.status_code == 422
+
 
 
 def test_b2b_verification_is_queued(auth_client, sample_certificate_image, monkeypatch):

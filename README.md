@@ -417,27 +417,47 @@ External verification and credit-based API for organizations.
 
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
-| `POST` | `/third_party/api/v1/keys/generate` | Generate new B2B API key | 🔐 Bearer (optional) |
-| `GET` | `/third_party/api/v1/keys` | List organization API keys | 🔐 Bearer |
-| `POST` | `/third_party/api/v1/credits/add` | Top-up credits for API key | 🔐 Bearer / Admin |
+| `POST` | `/third_party/api/v1/keys/generate` | Generate new B2B API key (secret key shown once) | 🔐 Bearer |
+| `GET` | `/third_party/api/v1/keys` | List organization API keys (masked secrets) | 🔐 Bearer |
+| `POST` | `/third_party/api/v1/keys/{id}/rotate` | Rotate secret key (invalidates old key) | 🔐 Bearer |
+| `DELETE` | `/third_party/api/v1/keys/{id}` | Revoke (deactivate) API key | 🔐 Bearer |
 | `POST` | `/third_party/api/v1/verify` | Direct verification (atomic credit deduction) | 🔑 X-API-Key |
 
 **Generate API Key Request:**
 ```json
 {
-  "name": "Mobile App Integration",
-  "initial_credits": 100
+  "name": "Mobile App Integration"
 }
 ```
 
-**Generate API Key Response:**
+**Generate API Key Response (Full Secret Shown Once):**
 ```json
 {
-  "api_key": "sk_live_abc123def456...",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "api_key": "cvfy_a1b2c3d4e5f6...",
+  "masked_key": "cvfy_a1b...e5f6",
   "name": "Mobile App Integration",
-  "credits": 100,
+  "credits": 3,
   "is_active": true,
-  "created_at": "2026-09-01T10:30:00Z"
+  "created_at": "2026-09-01T10:30:00Z",
+  "message": "API key generated successfully. Save this secret key securely — it will not be displayed in full again."
+}
+```
+
+**List API Keys Response (Masked Secrets):**
+```json
+{
+  "count": 1,
+  "api_keys": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "masked_key": "cvfy_a1b...e5f6",
+      "name": "Mobile App Integration",
+      "credits": 3,
+      "is_active": true,
+      "created_at": "2026-09-01T10:30:00Z"
+    }
+  ]
 }
 ```
 

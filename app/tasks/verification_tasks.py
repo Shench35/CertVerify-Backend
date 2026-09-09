@@ -135,7 +135,7 @@ def run_verification(
         }
 
     except Exception as e:
-        logger.error(f"Verification task failed for {transaction_ref}: {e}")
+        logger.exception(f"Verification task failed for {transaction_ref}: {e}")
 
         retries = getattr(self.request, "retries", 0)
         task_status, completed_at = _task_failure_state(retries)
@@ -148,7 +148,8 @@ def run_verification(
             ).first()
             if task_result:
                 task_result.status = task_status
-                task_result.error = str(e)
+                # Store sanitized, user-safe error message; full details remain in server logs
+                task_result.error = "Verification processing encountered an error. Please retry or contact support."
                 task_result.updated_at = datetime.utcnow()
                 task_result.completed_at = completed_at
                 session.add(task_result)

@@ -1,8 +1,10 @@
+import logging
 from google import genai
 from app.core.config import settings
 from app.services.validator_service import validate_document
 from app.services.document_analyser import parse_gemini_response
 
+logger = logging.getLogger(__name__)
 client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
 
@@ -75,7 +77,8 @@ JSON RESPONSE FORMAT:
         result = parse_gemini_response(gemini_response.text)
         return result
     except Exception as e:
-        return {"success": False, "error": str(e), "questions": []}
+        logger.error(f"Error generating questions: {e}", exc_info=True)
+        return {"success": False, "error": "An error occurred while generating assessment questions.", "questions": []}
 
 
 def evaluate_answers(questions: list[dict], answers: list[str], extracted_info: dict) -> dict:
@@ -128,4 +131,5 @@ JSON RESPONSE FORMAT:
         result["success"] = True
         return result
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Error evaluating answers: {e}", exc_info=True)
+        return {"success": False, "error": "An error occurred while evaluating answers."}

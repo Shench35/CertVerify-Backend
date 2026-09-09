@@ -6,7 +6,17 @@ from app.services.document_analyser import analyse_certificate
 from app.services.validator_service import validate_document
 from app.services.assessment_service import generate_questions, evaluate_answers
 from app.services.auth_service import register_user, login_user, refresh_access_token, send_password_reset_email, get_user_profile
-from app.services.b2b_service import create_b2b_key, deduct_b2b_credit, add_b2b_credits, get_b2b_key_data, get_b2b_balance, get_user_b2b_keys
+from app.services.b2b_service import (
+    create_b2b_key,
+    deduct_b2b_credit,
+    add_b2b_credits,
+    get_b2b_key_data,
+    get_b2b_balance,
+    get_user_b2b_keys,
+    mask_api_key,
+    rotate_b2b_key,
+    revoke_b2b_key,
+)
 from app.services import admin_service
 
 __all__ = [
@@ -26,5 +36,8 @@ __all__ = [
     "get_b2b_key_data",
     "get_b2b_balance",
     "get_user_b2b_keys",
+    "mask_api_key",
+    "rotate_b2b_key",
+    "revoke_b2b_key",
     "admin_service",
 ]

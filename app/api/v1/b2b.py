@@ -9,11 +9,15 @@ from app.services.b2b_service import (
     add_b2b_credits,
     get_b2b_balance,
     get_user_b2b_keys,
-    get_b2b_key_data
+    get_b2b_key_data,
+    mask_api_key,
+    rotate_b2b_key,
+    revoke_b2b_key,
 )
 from app.core.security import get_current_user
 from app.tasks.verification_tasks import run_b2b_verification
 from app.services.upload_validation import read_and_validate_upload
+from app.schemas.verification import CertificateType
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -23,7 +27,7 @@ logger = logging.getLogger(__name__)
     "/keys/generate",
     status_code=status.HTTP_201_CREATED,
     summary="Generate B2B API Key",
-    description="Creates a new API key for external B2B verification integration."
+    description="Creates a new API key for external B2B verification integration. The full secret key is only returned once."
 )
 async def generate_key(
     payload: CreateApiKeyRequest,
@@ -42,33 +46,34 @@ async def generate_key(
         email=email,
         user_id=user_id,
         name=payload.name,
-        initial_credits=payload.initial_credits
     )
 
     return {
+        "id": str(api_key_record.id),
         "api_key": api_key_record.api_key,
+        "masked_key": mask_api_key(api_key_record.api_key),
         "name": api_key_record.name,
         "credits": api_key_record.credits,
+        "is_active": api_key_record.is_active,
         "created_at": api_key_record.created_at,
-        "message": "API key generated successfully. Add verification credits to start verifying."
+        "message": "API key generated successfully. Save this secret key securely — it will not be displayed in full again."
     }
 
 
 @router.get(
     "/keys",
     summary="List User API Keys",
-    description="Retrieves all API keys belonging to the authenticated account."
+    description="Retrieves all API keys belonging to the authenticated account with secrets masked."
 )
 async def list_keys(current_user: dict = Depends(get_current_user)):
-    keys = get_user_b2b_keys(
-        user_id=current_user.get("uid"),
-        email=current_user.get("email")
-    )
+    user_id = current_user.get("uid")
+    keys = get_user_b2b_keys(user_id=user_id)
     return {
         "count": len(keys),
         "api_keys": [
             {
-                "api_key": k.api_key,
+                "id": str(k.id),
+                "masked_key": mask_api_key(k.api_key),
                 "name": k.name,
                 "credits": k.credits,
                 "is_active": k.is_active,
@@ -76,6 +81,62 @@ async def list_keys(current_user: dict = Depends(get_current_user)):
             }
             for k in keys
         ]
+    }
+
+
+@router.post(
+    "/keys/{key_id}/rotate",
+    summary="Rotate B2B API Key",
+    description="Generates a new secret key for an existing API key record. The old secret key is invalidated immediately."
+)
+async def rotate_key_endpoint(
+    key_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    user_id = current_user.get("uid")
+    key_obj, new_plain_key = rotate_b2b_key(user_id=user_id, key_id=key_id)
+    if not key_obj or not new_plain_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Active API key not found or does not belong to this account."
+        )
+
+    return {
+        "id": str(key_obj.id),
+        "api_key": new_plain_key,
+        "masked_key": mask_api_key(new_plain_key),
+        "name": key_obj.name,
+        "credits": key_obj.credits,
+        "is_active": key_obj.is_active,
+        "message": "API key rotated successfully. Save this new secret key securely — it will not be displayed in full again."
+    }
+
+
+@router.post(
+    "/keys/{key_id}/revoke",
+    summary="Revoke B2B API Key",
+    description="Deactivates an API key immediately, preventing any further verification requests."
+)
+@router.delete(
+    "/keys/{key_id}",
+    summary="Revoke B2B API Key (DELETE)",
+    description="Deactivates an API key immediately, preventing any further verification requests."
+)
+async def revoke_key_endpoint(
+    key_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    user_id = current_user.get("uid")
+    success = revoke_b2b_key(user_id=user_id, key_id=key_id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not found or does not belong to this account."
+        )
+
+    return {
+        "success": True,
+        "message": "API key revoked successfully."
     }
 
 
@@ -102,7 +163,7 @@ async def top_up_credits(
 )
 async def verify_certificate_b2b(
     file: UploadFile = File(..., description="Certificate image (PNG/JPG) or PDF"),
-    cert_type: str = Form(..., description="WAEC or NECO"),
+    cert_type: CertificateType = Form(..., description="Certificate type: WAEC or NECO"),
     x_api_key: str = Header(..., alias="X-API-Key", description="B2B API Key")
 ):
     key_data = get_b2b_key_data(x_api_key)
@@ -132,7 +193,7 @@ async def verify_certificate_b2b(
     try:
         filename = file.filename or "certificate"
         run_b2b_verification.apply_async(
-            args=[file_bytes.hex(), filename, cert_type, x_api_key],
+            args=[file_bytes.hex(), filename, cert_type.value, x_api_key],
             task_id=task_id,
             countdown=0,
         )

@@ -161,12 +161,11 @@ async def payment_callback(reference: str = None):
 )
 async def get_payment_history(current_user: dict = Depends(get_current_user)):
     user_id = current_user.get("uid")
-    email = current_user.get("email")
 
     with Session(engine) as session:
         statement = (
             select(Transaction)
-            .where((Transaction.user_id == user_id) | (Transaction.email == email))
+            .where(Transaction.user_id == user_id)
             .order_by(Transaction.created_at.desc())
         )
         transactions = session.exec(statement).all()
@@ -175,3 +174,4 @@ async def get_payment_history(current_user: dict = Depends(get_current_user)):
         "count": len(transactions),
         "transactions": transactions
     }
+

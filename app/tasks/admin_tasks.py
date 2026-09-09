@@ -64,3 +64,5 @@ def cleanup_expired_transactions(self, hours_threshold: int = 24):
     except Exception as e:
         logger.error(f"Transaction cleanup failed: {e}")
         raise self.retry(exc=e, countdown=300, max_retries=2)
+
+

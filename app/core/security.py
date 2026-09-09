@@ -83,10 +83,10 @@ async def get_current_user(
             detail="Token revoked. Please log in again.",
             headers={"WWW-Authenticate": "Bearer error=\"invalid_token\""}
         )
-    except InvalidIdTokenError as e:
+    except InvalidIdTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {str(e)}",
+            detail="Invalid authentication token.",
             headers={"WWW-Authenticate": "Bearer error=\"invalid_token\""}
         )
     except Exception as e:

@@ -2,7 +2,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.core.database import init_db
 from app.api.router import api_router
 # Import all models to ensure they are registered with SQLModel
 import app.models  # noqa: F401
@@ -11,8 +10,6 @@ import app.models  # noqa: F401
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager for startup & shutdown tasks."""
-    # Startup: initialize database tables
-    init_db()
     yield
 
 
@@ -48,12 +45,25 @@ async def root():
     }
 
 
+from sqlmodel import Session, text
+from fastapi import Response, status
+from app.core.database import engine
+
 @app.get("/health", tags=["Health & Status"])
-async def health_check():
-    return {
-        "status": "healthy",
-        "database": "connected"
-    }
+async def health_check(response: Response):
+    try:
+        with Session(engine) as session:
+            session.exec(text("SELECT 1"))
+        return {
+            "status": "healthy",
+            "database": "connected"
+        }
+    except Exception:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {
+            "status": "unhealthy",
+            "database": "disconnected"
+        }
 
 
 if __name__ == "__main__":

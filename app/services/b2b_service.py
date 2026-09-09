@@ -14,6 +14,13 @@ def generate_api_key_string() -> str:
     return f"cvfy_{uuid.uuid4().hex}"
 
 
+def mask_api_key(key: str) -> str:
+    """Masks an API key for safe display, revealing only the prefix and suffix."""
+    if not key or len(key) < 12:
+        return "****"
+    return f"{key[:8]}...{key[-4:]}"
+
+
 def get_b2b_key_data(api_key: str) -> ApiKey | None:
     with Session(engine) as session:
         statement = select(ApiKey).where(ApiKey.api_key == api_key)
@@ -24,8 +31,7 @@ def get_b2b_key_data(api_key: str) -> ApiKey | None:
 def create_b2b_key(
     email: str,
     user_id: str | None = None,
-    name: str = "Default API Key",
-    initial_credits: int = FREE_DAILY_CREDITS
+    name: str = "Default API Key"
 ) -> ApiKey:
     new_key = generate_api_key_string()
     with Session(engine) as session:
@@ -43,6 +49,67 @@ def create_b2b_key(
         session.commit()
         session.refresh(key_obj)
         return key_obj
+
+
+def rotate_b2b_key(user_id: str, key_id: str | uuid.UUID) -> tuple[ApiKey | None, str | None]:
+    """
+    Rotates an active API key for a user.
+    Generates a new secret key string, updates the record, and returns (key_obj, new_plain_key).
+    """
+    try:
+        parsed_id = uuid.UUID(str(key_id))
+    except (ValueError, TypeError):
+        return None, None
+
+    new_key_str = generate_api_key_string()
+    now = datetime.utcnow()
+
+    with Session(engine) as session:
+        key_obj = session.exec(
+            select(ApiKey).where(
+                ApiKey.id == parsed_id,
+                ApiKey.user_id == user_id,
+                ApiKey.is_active == True,
+            )
+        ).first()
+
+        if not key_obj:
+            return None, None
+
+        key_obj.api_key = new_key_str
+        key_obj.updated_at = now
+        session.add(key_obj)
+        session.commit()
+        session.refresh(key_obj)
+        return key_obj, new_key_str
+
+
+def revoke_b2b_key(user_id: str, key_id: str | uuid.UUID) -> bool:
+    """
+    Revokes (deactivates) an API key for a user.
+    """
+    try:
+        parsed_id = uuid.UUID(str(key_id))
+    except (ValueError, TypeError):
+        return False
+
+    now = datetime.utcnow()
+    with Session(engine) as session:
+        key_obj = session.exec(
+            select(ApiKey).where(
+                ApiKey.id == parsed_id,
+                ApiKey.user_id == user_id,
+            )
+        ).first()
+
+        if not key_obj:
+            return False
+
+        key_obj.is_active = False
+        key_obj.updated_at = now
+        session.add(key_obj)
+        session.commit()
+        return True
 
 
 def deduct_b2b_credit(api_key: str) -> bool:
@@ -137,16 +204,13 @@ def get_b2b_balance(api_key: str) -> int:
     return key_record.credits
 
 
-def get_user_b2b_keys(user_id: str | None = None, email: str | None = None) -> list[ApiKey]:
+def get_user_b2b_keys(user_id: str | None = None) -> list[ApiKey]:
+    if not user_id:
+        return []
     with Session(engine) as session:
-        statement = select(ApiKey)
-        if user_id and email:
-            statement = statement.where((ApiKey.user_id == user_id) | (ApiKey.email == email))
-        elif user_id:
-            statement = statement.where(ApiKey.user_id == user_id)
-        elif email:
-            statement = statement.where(ApiKey.email == email)
-        else:
-            return []
-        statement = statement.order_by(ApiKey.created_at.desc())
+        statement = (
+            select(ApiKey)
+            .where(ApiKey.user_id == user_id)
+            .order_by(ApiKey.created_at.desc())
+        )
         return session.exec(statement).all()

@@ -17,6 +17,8 @@ from app.services.credit_service import (
 )
 from app.services.upload_validation import read_and_validate_upload
 
+from app.schemas.verification import CertificateType
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,7 @@ async def get_credit_balance(current_user: dict = Depends(get_current_user)):
 )
 async def analyse_certificate_endpoint(
     file: UploadFile = File(..., description="Certificate file (JPEG, PNG, PDF)"),
-    cert_type: str = Form(..., description="WAEC or NECO"),
+    cert_type: CertificateType = Form(..., description="WAEC or NECO"),
     transaction_ref: Optional[str] = Form(None, description="Optional paid transaction reference"),
     current_user: dict = Depends(get_current_user)
 ):
@@ -59,7 +61,7 @@ async def analyse_certificate_endpoint(
             statement = select(Transaction).where(
                 Transaction.transaction_ref == transaction_ref,
                 Transaction.status == "success",
-                (Transaction.user_id == user_id) | (Transaction.email == email)
+                Transaction.user_id == user_id
             )
         else:
             statement = select(Transaction).where(Transaction.transaction_ref == "__new__")
@@ -117,7 +119,7 @@ async def analyse_certificate_endpoint(
         task_created = True
 
         run_verification.apply_async(
-            args=[file_bytes_hex, filename, cert_type, active_transaction_ref, email],
+            args=[file_bytes_hex, filename, cert_type.value, active_transaction_ref, email],
             task_id=task_id,
             countdown=0
         )
@@ -210,8 +212,9 @@ async def get_task_status(
         except json.JSONDecodeError:
             response["result"] = task_result.result
 
-    if task_result.status == "failure" and task_result.error:
-        response["error"] = task_result.error
+    if task_result.status == "failure":
+        response["error"] = task_result.error or "Verification processing failed. Please retry or contact support."
+        response["error_code"] = "VERIFICATION_FAILED"
 
     if task_result.completed_at:
         response["completed_at"] = task_result.completed_at
@@ -226,13 +229,12 @@ async def get_task_status(
 )
 async def get_user_verifications(current_user: dict = Depends(get_current_user)):
     user_id = current_user.get("uid")
-    email = current_user.get("email")
 
     with Session(engine) as session:
         statement = (
             select(Transaction)
             .where(
-                (Transaction.user_id == user_id) | (Transaction.email == email),
+                Transaction.user_id == user_id,
                 Transaction.verification_result != None
             )
             .order_by(Transaction.created_at.desc())
@@ -265,12 +267,11 @@ async def get_verification_report(
     current_user: dict = Depends(get_current_user)
 ):
     user_id = current_user.get("uid")
-    email = current_user.get("email")
 
     with Session(engine) as session:
         statement = select(Transaction).where(
             Transaction.transaction_ref == transaction_ref,
-            (Transaction.user_id == user_id) | (Transaction.email == email)
+            Transaction.user_id == user_id
         )
         record = session.exec(statement).first()
 

@@ -1,6 +1,12 @@
+from enum import Enum
 from datetime import datetime
 from typing import Optional, Any
 from pydantic import BaseModel, Field
+
+
+class CertificateType(str, Enum):
+    WAEC = "WAEC"
+    NECO = "NECO"
 
 
 class AnalyseResponse(BaseModel):
@@ -22,7 +28,7 @@ class AnalyseResponse(BaseModel):
 
 class VerificationHistoryItem(BaseModel):
     transaction_ref: str
-    cert_type: Optional[str] = None
+    cert_type: Optional[CertificateType] = None
     created_at: datetime
     document_score: Optional[float] = None
     final_trust_score: Optional[float] = None
@@ -31,7 +37,7 @@ class VerificationHistoryItem(BaseModel):
 
 class VerificationReportResponse(BaseModel):
     transaction_ref: str
-    cert_type: Optional[str] = None
+    cert_type: Optional[CertificateType] = None
     created_at: datetime
     document_score: Optional[float] = None
     final_trust_score: Optional[float] = None

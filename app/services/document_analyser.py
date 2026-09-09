@@ -55,7 +55,8 @@ def analyse_certificate(
     try:
         image = load_image_from_upload(file_bytes, filename)
     except Exception as e:
-        return {"success": False, "error": f"Could not process file: {str(e)}"}
+        logger.exception(f"Error loading image upload: {e}")
+        return {"success": False, "error": "Could not process uploaded file format."}
 
     template = get_template(selected_cert_type)
     subject_count_note = (
@@ -136,7 +137,8 @@ JSON RESPONSE FORMAT:
         )
         result = parse_gemini_response(response.text)
     except Exception as e:
-        return {"success": False, "error": f"AI analysis error: {str(e)}"}
+        logger.exception(f"AI document analysis error: {e}")
+        return {"success": False, "error": "AI document analysis could not be completed."}
 
     if not result.get("is_correct_type", True):
         return {

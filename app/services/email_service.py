@@ -95,13 +95,13 @@ def send_bulk_emails(
                 sent += 1
             except Exception as e:
                 failed += 1
-                errors.append(f"{email_addr}: {str(e)}")
-                logger.error(f"Failed to send email to {email_addr}: {e}")
+                errors.append(f"{email_addr}: Email delivery failed")
+                logger.error(f"Failed to send email to {email_addr}: {e}", exc_info=True)
 
         server.quit()
     except Exception as e:
-        logger.error(f"SMTP connection error during bulk send: {e}")
-        errors.append(f"SMTP connection error: {str(e)}")
+        logger.error(f"SMTP connection error during bulk send: {e}", exc_info=True)
+        errors.append("SMTP connection error: Could not connect to mail server")
 
     return {"sent": sent, "failed": failed, "errors": errors}
 

@@ -8,7 +8,7 @@ from app.services.payment_service import mark_transaction_success, verify_webhoo
 
 
 def test_payment_history_endpoint(auth_client, mock_user):
-    # Insert a test transaction
+    # Insert a test transaction with matching user_id
     tx_ref = str(uuid.uuid4())
     with Session(engine) as session:
         tx = Transaction(
@@ -29,6 +29,43 @@ def test_payment_history_endpoint(auth_client, mock_user):
     data = res.json()
     assert data["count"] >= 1
     assert any(t["transaction_ref"] == tx_ref for t in data["transactions"])
+
+
+def test_payment_history_excludes_same_email_different_or_null_user_id(auth_client, mock_user):
+    # Transaction with same email but user_id is NULL
+    tx_null_uid = str(uuid.uuid4())
+    # Transaction with same email but belonging to another UID
+    tx_other_uid = str(uuid.uuid4())
+
+    with Session(engine) as session:
+        session.add(Transaction(
+            transaction_ref=tx_null_uid,
+            user_id=None,
+            email=mock_user["email"],
+            amount_naira=1000.0,
+            amount_kobo=100000,
+            status="success",
+            paid_at=datetime.utcnow()
+        ))
+        session.add(Transaction(
+            transaction_ref=tx_other_uid,
+            user_id="other-user-uid-999",
+            email=mock_user["email"],
+            amount_naira=2000.0,
+            amount_kobo=200000,
+            status="success",
+            paid_at=datetime.utcnow()
+        ))
+        session.commit()
+
+    # History strictly queries by user_id and MUST NOT include either of these
+    res = auth_client.get("/payment/history")
+    assert res.status_code == 200
+    refs = [t["transaction_ref"] for t in res.json()["transactions"]]
+    assert tx_null_uid not in refs
+    assert tx_other_uid not in refs
+
+
 
 
 def test_payment_verification_requires_transaction_ownership(client):

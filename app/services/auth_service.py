@@ -52,10 +52,10 @@ async def register_user(email: str, password: str, display_name: str | None = No
             detail="Unable to reach Firebase authentication service."
         )
     except Exception as e:
-        logger.error(f"Error creating user in Firebase: {e}")
+        logger.exception(f"Error creating user in Firebase: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Registration failed: {str(e)}"
+            detail="Registration failed. Please verify your details and try again."
         )
 
 
@@ -172,7 +172,11 @@ async def send_password_reset_email(email: str) -> dict:
         except UserNotFoundError:
             return {"message": "If the email is registered, a password reset link has been sent."}
         except Exception as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+            logger.exception(f"Error generating password reset link: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to generate password reset link."
+            )
 
     payload = {"requestType": "PASSWORD_RESET", "email": email}
 
@@ -205,7 +209,8 @@ def get_user_profile(uid: str) -> dict:
             detail="User not found."
         )
     except Exception as e:
+        logger.exception(f"Error fetching Firebase user profile: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to fetch user profile: {str(e)}"
+            detail="Failed to fetch user profile."
         )

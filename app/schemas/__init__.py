@@ -13,6 +13,7 @@ from app.schemas.payment import (
     TransactionResponse
 )
 from app.schemas.verification import (
+    CertificateType,
     AnalyseResponse,
     VerificationHistoryItem,
     VerificationReportResponse
@@ -50,6 +51,7 @@ __all__ = [
     "InitiatePaymentResponse",
     "VerifyPaymentResponse",
     "TransactionResponse",
+    "CertificateType",
     "AnalyseResponse",
     "VerificationHistoryItem",
     "VerificationReportResponse",

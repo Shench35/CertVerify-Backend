@@ -331,11 +331,13 @@ def list_api_keys(
         query = query.offset((page - 1) * page_size).limit(page_size)
         keys = session.exec(query).all()
 
+        from app.services.b2b_service import mask_api_key
+
         return {
             "api_keys": [
                 {
                     "id": str(k.id),
-                    "api_key": k.api_key,
+                    "api_key": mask_api_key(k.api_key),
                     "user_id": k.user_id,
                     "email": k.email,
                     "name": k.name,

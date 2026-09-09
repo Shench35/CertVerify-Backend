@@ -91,10 +91,10 @@ async def set_admin(
         )
         return result
     except Exception as e:
-        logger.error(f"Set admin error: {e}")
+        logger.exception(f"Set admin error: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to update admin status: {str(e)}",
+            detail="Failed to update admin status.",
         )
 
 
@@ -110,10 +110,10 @@ async def disable_user(
         )
         return result
     except Exception as e:
-        logger.error(f"Disable user error: {e}")
+        logger.exception(f"Disable user error: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to update user status: {str(e)}",
+            detail="Failed to update user status.",
         )
 
 
@@ -205,6 +205,9 @@ async def update_api_key(
     return result
 
 
+from app.schemas.verification import CertificateType
+
+
 # ─── Verification Overview ──────────────────────────────────
 
 @router.get("/verifications", response_model=AdminVerificationListResponse)
@@ -212,7 +215,7 @@ async def list_verifications(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     verdict: Optional[str] = None,
-    cert_type: Optional[str] = None,
+    cert_type: Optional[CertificateType] = None,
     admin: dict = Depends(get_admin_user),
 ):
     """List all verifications with optional filters."""
@@ -221,7 +224,7 @@ async def list_verifications(
             page=page,
             page_size=page_size,
             verdict_filter=verdict,
-            cert_type_filter=cert_type,
+            cert_type_filter=cert_type.value if cert_type else None,
         )
         return result
     except Exception as e:

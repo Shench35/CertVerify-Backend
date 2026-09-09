@@ -18,6 +18,7 @@ from app.core.security import get_current_user
 router = APIRouter()
 
 
+
 @router.post(
     "/register",
     status_code=status.HTTP_201_CREATED,
@@ -74,3 +75,5 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         "user": profile,
         "token_claims": current_user
     }
+
+
