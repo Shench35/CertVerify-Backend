@@ -122,7 +122,7 @@ async def squad_webhook(
     transaction_ref = body.get("transaction_ref")
     transaction_status = body.get("transaction_status")
 
-    if transaction_status != "Success":
+    if str(transaction_status or "").strip().lower() != "success":
         return {"status": "ignored", "reason": "transaction not successful"}
 
     # Only credit the exact amount and currency associated with our pending

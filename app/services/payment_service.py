@@ -277,7 +277,8 @@ async def verify_squad_payment(transaction_ref: str) -> dict:
         }
 
     tx_status = provider_data.get("transaction_status")
-    if tx_status == "Success":
+    is_success = str(tx_status or "").strip().lower() == "success"
+    if is_success:
         if not payment_matches_order(
             transaction,
             provider_data.get("transaction_amount"),
@@ -295,7 +296,7 @@ async def verify_squad_payment(transaction_ref: str) -> dict:
         settle_payment(transaction_ref)
 
     return {
-        "paid": tx_status == "Success",
+        "paid": is_success,
         "status": str(tx_status or "unknown"),
         "amount": transaction.amount_naira,
         "email": transaction.email,
