@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     PROJECT_DESCRIPTION: str = "AI-Powered Forensic Certificate Verification Platform"
     VERSION: str = "1.0.0"
     DEBUG: bool = False
-    ENABLE_TEST_CONSOLE: bool = True
+    ENABLE_TEST_CONSOLE: bool = False
 
     # CORS
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # Squad Payment Gateway
     SQUAD_SECRET_KEY: str
     SQUAD_BASE_URL: str = "https://sandbox-api-d.squadco.com"
-    SQUAD_CALLBACK_URL: str = "http://localhost:8000/payment/paymentsuccess"
+    SQUAD_CALLBACK_URL: str = "https://certverify-backend-2l43.onrender.com/payment/paymentsuccess"
 
     # Google Gemini AI
     GEMINI_API_KEY: str
@@ -31,7 +31,8 @@ class Settings(BaseSettings):
     GEMINI_EXAMINER_MODEL: str = "gemini-2.5-flash"
 
     # Firebase Authentication
-    FIREBASE_CREDENTIALS_PATH: str = "certverify-backend-firebase-adminsdk-fbsvc-b867004492.json"
+    # FIREBASE_CREDENTIALS_PATH: str = "certverify-backend-firebase-adminsdk-fbsvc-b867004492.json"
+    FIREBASE_CREDENTIALS_PATH: str = "/etc/secrets/firebase.json"
     FIREBASE_SERVICE_ACCOUNT_JSON: str | None = None
     FIREBASE_WEB_API_KEY: str = ""
 
