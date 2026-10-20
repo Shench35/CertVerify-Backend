@@ -18,8 +18,8 @@ class InitiatePaymentResponse(BaseModel):
 class VerifyPaymentResponse(BaseModel):
     paid: bool
     status: str
-    amount: float
-    email: str
+    amount: Optional[float] = None
+    email: Optional[str] = None
     transaction_ref: str
     message: Optional[str] = None
 

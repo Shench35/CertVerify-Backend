@@ -33,8 +33,8 @@ class AdminUserListItem(BaseModel):
     display_name: Optional[str] = None
     email_verified: bool = False
     disabled: bool = False
-    created_at: Optional[str] = None
-    last_sign_in: Optional[str] = None
+    created_at: Optional[int] = None
+    last_sign_in: Optional[int] = None
     photo_url: Optional[str] = None
     custom_claims: Optional[dict] = None
 

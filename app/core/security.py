@@ -116,12 +116,20 @@ async def get_admin_user(
     """
     Admin-only dependency. Checks for admin privileges via:
     1. Firebase custom claim 'admin: true'
-    2. Email in ADMIN_EMAILS settings whitelist
+    2. Verified email in ADMIN_EMAILS settings whitelist
     Raises 403 if neither condition is met.
     """
     claims = current_user.get("claims", {})
     is_admin_claim = claims.get("admin", False)
-    is_admin_email = current_user.get("email", "") in settings.ADMIN_EMAILS
+    email = (current_user.get("email") or "").strip().casefold()
+    allowed_admin_emails = {
+        configured_email.strip().casefold()
+        for configured_email in settings.ADMIN_EMAILS
+    }
+    is_admin_email = (
+        current_user.get("email_verified", False)
+        and email in allowed_admin_emails
+    )
 
     if not is_admin_claim and not is_admin_email:
         raise HTTPException(
@@ -131,4 +139,3 @@ async def get_admin_user(
 
     current_user["is_admin"] = True
     return current_user
-

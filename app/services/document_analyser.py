@@ -1,12 +1,16 @@
 import io
+import logging
 import re
 import json
+import math
 from pathlib import Path
 from google import genai
 from PIL import Image
 import fitz  # PyMuPDF
 from app.core.config import settings
 from app.services.template_service import get_template
+
+logger = logging.getLogger(__name__)
 
 client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
@@ -136,6 +140,16 @@ JSON RESPONSE FORMAT:
             contents=[prompt, image],
         )
         result = parse_gemini_response(response.text)
+        if not isinstance(result, dict):
+            raise ValueError("AI response must be a JSON object")
+        score = result.get("authenticity_score")
+        if (
+            isinstance(score, bool)
+            or not isinstance(score, (int, float))
+            or not math.isfinite(score)
+            or not 0 <= score <= 100
+        ):
+            raise ValueError("AI response score must be a finite number from 0 to 100")
     except Exception as e:
         logger.exception(f"AI document analysis error: {e}")
         return {"success": False, "error": "AI document analysis could not be completed."}

@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from sqlmodel import Session
 
 from app.core.database import engine
+from app.core.api_key_security import hash_api_key
 from app.models.api_key import ApiKey
 from app.models.user_credit import UserCreditAccount
 from app.services.b2b_service import (
@@ -68,14 +69,18 @@ def test_b2b_keys_list_excludes_same_email_other_user_id(auth_client, mock_user)
 
     with Session(engine) as session:
         session.add(ApiKey(
-            api_key=other_key_val,
+            api_key=hash_api_key(other_key_val),
+            api_key_prefix=other_key_val[:8],
+            api_key_suffix=other_key_val[-4:],
             user_id="other-user-999",
             email=mock_user["email"],
             name="Other User Key",
             credits=3,
         ))
         session.add(ApiKey(
-            api_key=null_key_val,
+            api_key=hash_api_key(null_key_val),
+            api_key_prefix=null_key_val[:8],
+            api_key_suffix=null_key_val[-4:],
             user_id=None,
             email=mock_user["email"],
             name="Unclaimed Key",
@@ -184,8 +189,19 @@ def test_b2b_verification_is_queued(auth_client, sample_certificate_image, monke
 
     assert response.status_code == 202
     assert response.json()["status"] == "pending"
-    assert queued["args"][0] == sample_certificate_image.hex()
+    assert queued["args"][0] == queued["task_id"]
     assert queued["args"][2] == "WAEC"
+
+    from app.models.task_result import TaskResult
+    from sqlmodel import select
+
+    with Session(engine) as session:
+        row = session.exec(
+            select(TaskResult).where(TaskResult.task_id == queued["task_id"])
+        ).first()
+    assert row is not None
+    assert row.status == "pending"
+    assert row.payload == sample_certificate_image
 
 
 def test_user_credits_reset_and_subscription_expiry():
@@ -215,7 +231,13 @@ def test_user_credits_reset_and_subscription_expiry():
 def test_b2b_subscription_sets_monthly_allowance():
     key_value = f"cvfy_{uuid.uuid4().hex}"
     with Session(engine) as session:
-        key = ApiKey(api_key=key_value, email="b2b@example.com", credits=3)
+        key = ApiKey(
+            api_key=hash_api_key(key_value),
+            api_key_prefix=key_value[:8],
+            api_key_suffix=key_value[-4:],
+            email="b2b@example.com",
+            credits=3,
+        )
         session.add(key)
         session.commit()
 

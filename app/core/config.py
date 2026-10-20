@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     PROJECT_DESCRIPTION: str = "AI-Powered Forensic Certificate Verification Platform"
     VERSION: str = "1.0.0"
     DEBUG: bool = False
+    ENABLE_TEST_CONSOLE: bool = True
 
     # CORS
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
@@ -22,7 +23,7 @@ class Settings(BaseSettings):
     # Squad Payment Gateway
     SQUAD_SECRET_KEY: str
     SQUAD_BASE_URL: str = "https://sandbox-api-d.squadco.com"
-    SQUAD_CALLBACK_URL: str = "https://junkman-thrash-omission.ngrok-free.dev/payment-success"
+    SQUAD_CALLBACK_URL: str = "http://localhost:8000/payment/paymentsuccess"
 
     # Google Gemini AI
     GEMINI_API_KEY: str

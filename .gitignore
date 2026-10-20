@@ -228,3 +228,6 @@ FRONTEND_STATE_STRATEGY.md
 *-adminsdk-*.json
 serviceAccountKey.json
 firebase_credentials.json
+*.pyc
+celerybeat-schedule*
+*firebase-adminsdk*.jsoningest.txt

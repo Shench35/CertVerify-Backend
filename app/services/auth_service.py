@@ -166,17 +166,13 @@ async def refresh_access_token(refresh_token: str) -> dict:
 
 async def send_password_reset_email(email: str) -> dict:
     if not settings.FIREBASE_WEB_API_KEY:
-        try:
-            link = auth.generate_password_reset_link(email)
-            return {"message": "Password reset link generated.", "reset_link": link}
-        except UserNotFoundError:
-            return {"message": "If the email is registered, a password reset link has been sent."}
-        except Exception as e:
-            logger.exception(f"Error generating password reset link: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to generate password reset link."
-            )
+        # Never return a password-reset link to the caller. A reset link is a
+        # bearer credential; exposing it here would let anyone reset another
+        # user's password by supplying their email address.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password reset service is not configured.",
+        )
 
     payload = {"requestType": "PASSWORD_RESET", "email": email}
 
@@ -184,10 +180,15 @@ async def send_password_reset_email(email: str) -> dict:
         try:
             await client.post(
                 f"{SEND_OOB_CODE_URL}?key={settings.FIREBASE_WEB_API_KEY}",
-                json=payload
+                json=payload,
+                timeout=10.0,
             )
-        except Exception as e:
+        except httpx.RequestError as e:
             logger.error(f"Error during password reset request: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Unable to reach Firebase authentication service.",
+            ) from e
 
     return {"message": "If the email is registered, a password reset email has been sent."}
 

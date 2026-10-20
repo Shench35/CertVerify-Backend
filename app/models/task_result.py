@@ -5,7 +5,7 @@ TaskResult model for tracking async Celery task status and results.
 import uuid
 from datetime import datetime
 from sqlmodel import SQLModel, Field, Column
-from sqlalchemy import Text
+from sqlalchemy import Text, LargeBinary
 
 
 class TaskResult(SQLModel, table=True):
@@ -17,7 +17,10 @@ class TaskResult(SQLModel, table=True):
     task_type: str = Field(index=True)
     status: str = Field(default="pending", index=True)  # pending, started, retrying, success, failure
     user_id: str | None = Field(default=None, index=True)
+    api_key_hash: str | None = Field(default=None, index=True)
+    credit_refunded: bool = Field(default=False)
     transaction_ref: str | None = Field(default=None, index=True)
+    payload: bytes | None = Field(default=None, sa_column=Column(LargeBinary, nullable=True))
     result: str | None = Field(default=None, sa_column=Column(Text))  # JSON stringified
     error: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)

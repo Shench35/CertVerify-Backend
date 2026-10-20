@@ -184,15 +184,15 @@ async def list_api_keys(
         )
 
 
-@router.patch("/api-keys/{api_key}")
+@router.patch("/api-keys/{key_id}")
 async def update_api_key(
-    api_key: str,
+    key_id: str,
     request: UpdateApiKeyRequest,
     admin: dict = Depends(get_admin_user),
 ):
     """Update an API key's credits, active status, or name."""
     result = admin_service.update_api_key(
-        api_key_str=api_key,
+        key_id=key_id,
         credits=request.credits,
         is_active=request.is_active,
         name=request.name,
@@ -200,7 +200,7 @@ async def update_api_key(
     if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"API key not found.",
+            detail="API key not found.",
         )
     return result
 

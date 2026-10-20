@@ -36,6 +36,18 @@ celery_app.conf.update(
     # Result expiry (24 hours)
     result_expires=86400,
 
+    # Durable database task records and stale payment cleanup.
+    beat_schedule={
+        "expire-pending-payments-hourly": {
+            "task": "app.tasks.admin_tasks.cleanup_expired_transactions",
+            "schedule": 3600.0,
+        },
+        "cleanup-verification-tasks-daily": {
+            "task": "app.tasks.admin_tasks.cleanup_verification_tasks",
+            "schedule": 86400.0,
+        },
+    },
+
     # Task routing
     task_routes={
         "app.tasks.verification_tasks.*": {"queue": "verification"},

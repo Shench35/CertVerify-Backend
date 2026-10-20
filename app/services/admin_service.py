@@ -3,6 +3,7 @@ Admin service layer — business logic for admin panel operations.
 """
 
 import logging
+import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -12,6 +13,7 @@ from sqlmodel import Session, select, func, col, text
 from app.core.database import engine
 from app.models.transaction import Transaction
 from app.models.api_key import ApiKey
+from app.services.b2b_service import stored_key_mask
 
 logger = logging.getLogger(__name__)
 
@@ -331,13 +333,11 @@ def list_api_keys(
         query = query.offset((page - 1) * page_size).limit(page_size)
         keys = session.exec(query).all()
 
-        from app.services.b2b_service import mask_api_key
-
         return {
             "api_keys": [
                 {
                     "id": str(k.id),
-                    "api_key": mask_api_key(k.api_key),
+                    "api_key": stored_key_mask(k),
                     "user_id": k.user_id,
                     "email": k.email,
                     "name": k.name,
@@ -354,15 +354,20 @@ def list_api_keys(
 
 
 def update_api_key(
-    api_key_str: str,
+    key_id: str,
     credits: Optional[int] = None,
     is_active: Optional[bool] = None,
     name: Optional[str] = None,
 ) -> dict | None:
     """Update an API key's credits, active status, or name."""
+    try:
+        parsed_id = uuid.UUID(key_id)
+    except (ValueError, TypeError):
+        return None
+
     with Session(engine) as session:
         key = session.exec(
-            select(ApiKey).where(ApiKey.api_key == api_key_str)
+            select(ApiKey).where(ApiKey.id == parsed_id)
         ).first()
 
         if not key:
@@ -381,7 +386,7 @@ def update_api_key(
 
         return {
             "id": str(key.id),
-            "api_key": key.api_key,
+            "api_key": stored_key_mask(key),
             "user_id": key.user_id,
             "email": key.email,
             "name": key.name,

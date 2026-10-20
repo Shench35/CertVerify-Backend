@@ -4,9 +4,9 @@ Revision ID: a1b2c3d4e5f6
 Revises:
 Create Date: 2026-09-09
 
-For existing databases that already have these tables, run:
-    alembic stamp head
-to mark the database as up-to-date without executing the migration.
+For a pre-existing database with this schema, mark only this baseline revision
+then apply later changes with `alembic upgrade head`. Do not stamp `head`, which
+would skip the data and schema migrations added after this baseline.
 """
 from typing import Sequence, Union
 

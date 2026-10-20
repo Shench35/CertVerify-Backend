@@ -22,7 +22,7 @@ def _task_failure_state(retries: int) -> tuple[str, datetime | None]:
 @celery_app.task(bind=True, name="app.tasks.verification_tasks.run_verification")
 def run_verification(
     self,
-    file_bytes_hex: str,
+    task_payload_id: str,
     filename: str,
     cert_type: str,
     transaction_ref: str,
@@ -32,7 +32,7 @@ def run_verification(
     Run the full forensic verification pipeline asynchronously.
 
     Args:
-        file_bytes_hex: Hex-encoded file bytes (JSON-safe transport)
+        task_payload_id: ID of the database-backed upload payload
         filename: Original filename
         cert_type: "WAEC" or "NECO"
         transaction_ref: Linked transaction reference
@@ -42,26 +42,33 @@ def run_verification(
     from app.core.database import engine
     from app.models.transaction import Transaction
     from app.models.task_result import TaskResult
+    from app.models.user_credit import UserCreditAccount
     from sqlmodel import Session, select
 
     task_id = self.request.id
 
     try:
-        file_bytes = bytes.fromhex(file_bytes_hex)
-
-        # Update task status to "started"
+        # Load worker input from Postgres; the broker carries only a task ID.
         with Session(engine) as session:
             task_result = session.exec(
-                select(TaskResult).where(TaskResult.task_id == task_id)
+                select(TaskResult).where(TaskResult.task_id == task_payload_id)
             ).first()
-            if task_result:
-                task_result.status = "started"
-                task_result.updated_at = datetime.utcnow()
-                session.add(task_result)
-                session.commit()
+            if task_result and task_result.status == "success" and task_result.result:
+                return json.loads(task_result.result)
+            if task_result and task_result.status == "failure":
+                return {"success": False, "error": task_result.error}
+            if not task_result or task_result.payload is None:
+                raise ValueError("Verification payload is unavailable")
+            file_bytes = task_result.payload
+            task_result.status = "started"
+            task_result.updated_at = datetime.utcnow()
+            session.add(task_result)
+            session.commit()
 
         # Run forensic validation pipeline
         result = validate_document(file_bytes, filename, cert_type)
+        if not result.get("success"):
+            raise RuntimeError(result.get("error", "Document analysis could not be completed"))
 
         document_score = result.get(
             "document_score",
@@ -104,9 +111,11 @@ def run_verification(
                     "final_verdict": final_verdict,
                     "final_trust_score": final_trust_score,
                     "document_score": document_score,
+                    "decision_limit": result.get("decision_limit"),
                 })
                 task_result.updated_at = datetime.utcnow()
                 task_result.completed_at = datetime.utcnow()
+                task_result.payload = None
                 session.add(task_result)
                 session.commit()
 
@@ -152,6 +161,19 @@ def run_verification(
                 task_result.error = "Verification processing encountered an error. Please retry or contact support."
                 task_result.updated_at = datetime.utcnow()
                 task_result.completed_at = completed_at
+                if not will_retry:
+                    task_result.payload = None
+                    if task_result.task_type == "verification" and not task_result.credit_refunded:
+                        account = session.exec(
+                            select(UserCreditAccount)
+                            .where(UserCreditAccount.user_id == task_result.user_id)
+                            .with_for_update()
+                        ).first()
+                        if account and account.credits < account.daily_credit_limit:
+                            account.credits += 1
+                            account.updated_at = datetime.utcnow()
+                            session.add(account)
+                        task_result.credit_refunded = True
                 session.add(task_result)
                 session.commit()
 
@@ -168,20 +190,43 @@ def run_verification(
 @celery_app.task(bind=True, name="app.tasks.verification_tasks.run_b2b_verification")
 def run_b2b_verification(
     self,
-    file_bytes_hex: str,
+    task_payload_id: str,
     filename: str,
     cert_type: str,
-    api_key: str,
 ):
     """
     Run B2B verification asynchronously.
-    Credit deduction should happen BEFORE queuing this task.
+    Credit deduction and task-payload persistence happen before queueing.
     """
     from app.services.validator_service import validate_document
+    from app.core.database import engine
+    from app.models.task_result import TaskResult
+    from app.models.api_key import ApiKey
+    from app.models.user_credit import UserCreditAccount
+    from sqlmodel import Session, select
+
+    task_id = self.request.id
 
     try:
-        file_bytes = bytes.fromhex(file_bytes_hex)
+        with Session(engine) as session:
+            task = session.exec(
+                select(TaskResult).where(TaskResult.task_id == task_payload_id)
+            ).first()
+            if task and task.status == "success" and task.result:
+                return json.loads(task.result)
+            if task and task.status == "failure":
+                return {"success": False, "error": task.error}
+            if not task or task.payload is None:
+                raise ValueError("Verification payload is unavailable")
+            file_bytes = task.payload
+            task.status = "started"
+            task.updated_at = datetime.utcnow()
+            session.add(task)
+            session.commit()
+
         result = validate_document(file_bytes, filename, cert_type)
+        if not result.get("success"):
+            raise RuntimeError(result.get("error", "Document analysis could not be completed"))
 
         document_score = result.get(
             "document_score",
@@ -194,15 +239,69 @@ def run_b2b_verification(
         else:
             final_verdict = "HIGH_RISK"
 
-        logger.info(f"B2B verification complete for key {api_key[:8]}...: {final_verdict}")
-
-        return {
+        task_result = {
             "success": True,
+            "cert_type": cert_type,
             "final_verdict": final_verdict,
             "document_score": document_score,
             "result": result,
         }
+        with Session(engine) as session:
+            task = session.exec(
+                select(TaskResult).where(TaskResult.task_id == task_id)
+            ).first()
+            if task:
+                task.status = "success"
+                task.result = json.dumps(task_result)
+                task.payload = None
+                task.updated_at = datetime.utcnow()
+                task.completed_at = datetime.utcnow()
+                session.add(task)
+                session.commit()
+        logger.info(f"B2B verification complete for task {task_id}: {final_verdict}")
+        return task_result
 
     except Exception as e:
-        logger.error(f"B2B verification task failed: {e}")
-        raise self.retry(exc=e, countdown=120, max_retries=2)
+        logger.exception("B2B verification task failed")
+        retries = getattr(self.request, "retries", 0)
+        will_retry = retries < VERIFICATION_MAX_RETRIES
+        with Session(engine) as session:
+            task = session.exec(
+                select(TaskResult)
+                .where(TaskResult.task_id == self.request.id)
+                .with_for_update()
+            ).first()
+            if task:
+                task.status = "retrying" if will_retry else "failure"
+                task.error = "Verification processing encountered an error. Please retry or contact support."
+                task.updated_at = datetime.utcnow()
+                if not will_retry:
+                    task.payload = None
+                    task.completed_at = datetime.utcnow()
+                    if task.task_type == "b2b_verification" and not task.credit_refunded:
+                        key = session.exec(
+                            select(ApiKey)
+                            .where(ApiKey.api_key == task.api_key_hash)
+                            .with_for_update()
+                        ).first()
+                        if key and key.credits < key.daily_credit_limit:
+                            key.credits += 1
+                            key.updated_at = datetime.utcnow()
+                            session.add(key)
+                        task.credit_refunded = True
+                    elif task.task_type == "verification" and not task.credit_refunded:
+                        account = session.exec(
+                            select(UserCreditAccount)
+                            .where(UserCreditAccount.user_id == task.user_id)
+                            .with_for_update()
+                        ).first()
+                        if account and account.credits < account.daily_credit_limit:
+                            account.credits += 1
+                            account.updated_at = datetime.utcnow()
+                            session.add(account)
+                        task.credit_refunded = True
+                session.add(task)
+                session.commit()
+        if will_retry:
+            raise self.retry(exc=e, countdown=120, max_retries=VERIFICATION_MAX_RETRIES)
+        raise

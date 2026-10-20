@@ -10,6 +10,8 @@ class ApiKey(SQLModel, table=True):
         default_factory=uuid.uuid4, primary_key=True
     )
     api_key: str = Field(index=True, unique=True)
+    api_key_prefix: str | None = Field(default=None)
+    api_key_suffix: str | None = Field(default=None)
     user_id: str | None = Field(default=None, index=True)
     email: str = Field(index=True)
     name: str = Field(default="Default API Key")

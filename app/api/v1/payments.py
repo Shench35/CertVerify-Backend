@@ -1,8 +1,8 @@
 import json
 from typing import Optional
 from datetime import datetime
-from fastapi import APIRouter, Request, Header, Depends, HTTPException, status
-from sqlmodel import Session, select
+from fastapi import APIRouter, Request, Header, Depends, HTTPException, status, Query
+from sqlmodel import Session, select, func
 from app.core.database import engine
 from app.models.transaction import Transaction
 from app.schemas.payment import InitiatePaymentRequest, InitiatePaymentResponse, VerifyPaymentResponse
@@ -10,8 +10,8 @@ from app.services.payment_service import (
     initiate_squad_payment,
     verify_squad_payment,
     verify_webhook_signature,
-    mark_transaction_success,
-    apply_payment_success_side_effects,
+    payment_matches_order,
+    settle_payment,
 )
 from app.core.security import get_current_user, get_optional_user
 from app.services.b2b_service import get_b2b_key_data
@@ -107,24 +107,43 @@ async def squad_webhook(
     if not verify_webhook_signature(body_bytes, x_squad_encrypted_body):
         return {"status": "rejected", "reason": "invalid signature"}
 
-    payload = json.loads(body_bytes)
+    try:
+        payload = json.loads(body_bytes)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook payload.")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook payload.")
     if payload.get("Event") != "charge_successful":
         return {"status": "ignored", "reason": "not a charge event"}
 
     body = payload.get("Body", {})
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook payload.")
     transaction_ref = body.get("transaction_ref")
     transaction_status = body.get("transaction_status")
 
     if transaction_status != "Success":
         return {"status": "ignored", "reason": "transaction not successful"}
 
-    tx, transitioned = mark_transaction_success(transaction_ref)
+    # Only credit the exact amount and currency associated with our pending
+    # order. Squad documents webhook `amount` in the lowest currency unit.
+    with Session(engine) as session:
+        transaction = session.exec(
+            select(Transaction).where(Transaction.transaction_ref == transaction_ref)
+        ).first()
+    if not transaction or not payment_matches_order(
+        transaction,
+        body.get("amount"),
+        body.get("currency"),
+        transaction_ref,
+    ):
+        return {"status": "rejected", "reason": "payment details do not match order"}
+
+    tx, transitioned = settle_payment(transaction_ref)
     if not tx:
         return {"status": "ignored", "reason": "transaction not found"}
     if not transitioned:
         return {"status": "ignored", "reason": "already processed"}
-
-    apply_payment_success_side_effects(tx)
 
     # Queue payment confirmation email asynchronously
     if tx.email:
@@ -148,9 +167,10 @@ async def payment_callback(reference: str = None):
         return {"message": "No transaction reference received."}
     res = await verify_squad_payment(reference)
     return {
-        "message": "Payment processed successfully.",
+        "message": "Payment verified." if res.get("paid") else "Payment was not confirmed.",
         "transaction_ref": reference,
-        "status": res.get("status")
+        "status": res.get("status"),
+        "paid": res.get("paid", False),
     }
 
 
@@ -159,19 +179,29 @@ async def payment_callback(reference: str = None):
     summary="Get Payment History",
     description="Lists all payment transactions for the authenticated user."
 )
-async def get_payment_history(current_user: dict = Depends(get_current_user)):
+async def get_payment_history(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+):
     user_id = current_user.get("uid")
 
     with Session(engine) as session:
+        total = session.exec(
+            select(func.count()).select_from(Transaction).where(Transaction.user_id == user_id)
+        ).one()
         statement = (
             select(Transaction)
             .where(Transaction.user_id == user_id)
             .order_by(Transaction.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
         )
         transactions = session.exec(statement).all()
 
     return {
-        "count": len(transactions),
-        "transactions": transactions
+        "count": total,
+        "transactions": transactions,
+        "page": page,
+        "page_size": page_size,
     }
-

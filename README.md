@@ -21,6 +21,7 @@ It combines **hybrid verification strategies**, **asynchronous background proces
    - Forensic template matching against reference documents
 
 2. **Cognitive Dynamic Knowledge Testing (40% weight)**
+   > **Status: planned.** The assessment service exists (app/services/assessment_service.py) but is not yet wired to an endpoint. Current trust scores are based on the document analysis alone.
    - Generates 5 dynamic, subject-specific reasoning questions based on the candidate's transcript
    - Gemini AI generates questions tailored to the candidate's subjects
    - Strict evaluation of answers to verify genuine subject comprehension
@@ -106,7 +107,7 @@ CertVerify-Backend/
 ├── README.md                             # This file
 ├── requirements.txt                      # Python dependencies
 ├── run_tests.py                          # Test runner script
-├── certverify-backend-firebase-adminsdk-*.json  # Firebase credentials
+├── your-firebase-adminsdk.json           # Firebase credentials
 │
 ├── app/                                  # Main application package
 │   ├── __init__.py
@@ -209,6 +210,8 @@ B2B API keys for third-party organizations.
 ```sql
 - id (UUID, PK)
 - api_key (VARCHAR, UNIQUE, INDEXED)
+- api_key_prefix, api_key_suffix (masked display only)
+- `api_key` stores a SHA-256 digest, never the reusable secret
 - user_id (VARCHAR, FK to Firebase)
 - email (VARCHAR)
 - name (VARCHAR)
@@ -226,6 +229,8 @@ Tracks async Celery task status and results.
 - status (VARCHAR) -- 'pending', 'started', 'success', 'failure'
 - user_id (VARCHAR, INDEXED)
 - transaction_ref (VARCHAR, INDEXED)
+- api_key_hash (VARCHAR, INDEXED; B2B task owner)
+- payload (BINARY; removed when processing ends)
 - result (TEXT/JSON)
 - error (TEXT)
 - created_at, updated_at, completed_at (TIMESTAMP)
@@ -234,6 +239,22 @@ Tracks async Celery task status and results.
 ---
 
 ## 🔌 API Endpoints Reference
+
+### Local browser test console
+
+The optional browser console exercises account login, user and B2B verification,
+task polling, payment initiation, and history endpoints. Enable it only in a
+local or trusted test environment by adding this setting to `.env`:
+
+```ini
+ENABLE_TEST_CONSOLE=true
+```
+
+Start the API and open `http://localhost:8000/test-console/`. The console is
+served by FastAPI on the same origin, so no separate Node frontend or CORS
+configuration is needed. Tokens and the B2B key stay in the current browser
+tab's session storage and are cleared with **Clear session**. Payment
+initiation uses the configured Squad environment; it can open a real checkout.
 
 ### 1. Health & Status (`/`)
 Check API health and connectivity.
@@ -271,21 +292,20 @@ User registration, login, and token management.
 {
   "email": "user@example.com",
   "password": "SecurePassword123!",
-  "display_name": "John Doe"
+  "full_name": "John Doe"
 }
 ```
 
 **Login Response:**
 ```json
 {
-  "id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6IjEyMyJ9...",
-  "refresh_token": "AHbXAT0tM3C-...",
-  "user": {
-    "uid": "user_123",
-    "email": "user@example.com",
-    "display_name": "John Doe",
-    "email_verified": false
-  }
+  "access_token": "eyJhbGciOi...",
+  "refresh_token": "AMf-vB...",
+  "expires_in": 3600,
+  "token_type": "bearer",
+  "uid": "user_123",
+  "email": "user@example.com",
+  "display_name": "John Doe"
 }
 ```
 
@@ -297,26 +317,27 @@ Initiate, verify, and track payments via Squad.
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
 | `POST` | `/payment/pay/initiate` | Create payment session & get checkout URL | 🔐 Bearer (optional) |
-| `GET` | `/payment/pay/verify/{ref}` | Check payment status with Squad API | ❌ |
+| `GET` | `/payment/pay/verify/{ref}` | Check payment status with Squad API | 🔐 Bearer |
 | `POST` | `/payment/webhook` | Squad webhook for payment confirmation | 🔒 HMAC |
-| `GET` | `/payment/payment_success` | Redirect after inline payment | ❌ |
+| `GET` | `/payment/paymentsuccess` | Redirect after inline payment | ❌ |
 | `GET` | `/payment/history` | List all transactions for user | 🔐 Bearer |
+
+Plans: user_monthly (5,000 NGN, 20 verifications per day for 30 days) and b2b_monthly (20,000 NGN, 1,000 verifications per day for 30 days, requires api_key in the request). Repeat payments extend an active subscription by 30 days.
 
 **Initiate Payment Request:**
 ```json
 {
   "amount_naira": 5000.00,
-  "email": "user@example.com"
+  "email": "user@example.com",
+  "plan": "user_monthly"
 }
 ```
 
 **Initiate Payment Response:**
 ```json
 {
-  "status": "success",
   "checkout_url": "https://sandbox-checkout.squadco.com/...",
-  "transaction_ref": "TXN-abc123",
-  "amount_naira": 5000.00
+  "transaction_ref": "TXN-abc123"
 }
 ```
 
@@ -331,6 +352,7 @@ Upload certificates for forensic analysis with async processing.
 | `GET` | `/AI_pipeline/verify/status/{task_id}` | Poll async task status & results | 🔐 Bearer |
 | `GET` | `/AI_pipeline/verify/history` | List user verification reports | 🔐 Bearer |
 | `GET` | `/AI_pipeline/verify/report/{ref}` | Get detailed forensic report | 🔐 Bearer |
+| `GET` | `/AI_pipeline/verify/credits` | Get remaining verification credits | 🔐 Bearer |
 
 **Analyse Certificate Request:**
 ```bash
@@ -420,8 +442,10 @@ External verification and credit-based API for organizations.
 | `POST` | `/third_party/api/v1/keys/generate` | Generate new B2B API key (secret key shown once) | 🔐 Bearer |
 | `GET` | `/third_party/api/v1/keys` | List organization API keys (masked secrets) | 🔐 Bearer |
 | `POST` | `/third_party/api/v1/keys/{id}/rotate` | Rotate secret key (invalidates old key) | 🔐 Bearer |
+| `POST` | `/third_party/api/v1/keys/{id}/revoke` | Revoke (deactivate) API key; also available as DELETE | 🔐 Bearer |
 | `DELETE` | `/third_party/api/v1/keys/{id}` | Revoke (deactivate) API key | 🔐 Bearer |
 | `POST` | `/third_party/api/v1/verify` | Direct verification (atomic credit deduction) | 🔑 X-API-Key |
+| `GET` | `/third_party/api/v1/tasks/{task_id}` | Poll B2B verification result | 🔑 X-API-Key |
 
 **Generate API Key Request:**
 ```json
@@ -464,19 +488,18 @@ External verification and credit-based API for organizations.
 **B2B Verification Request:**
 ```bash
 curl -X POST http://localhost:8000/third_party/api/v1/verify \
-  -H "X-API-Key: sk_live_abc123def456..." \
+  -H "X-API-Key: cvfy_your_key_here" \
   -F "file=@certificate.pdf" \
   -F "cert_type=WAEC"
 ```
 
-**B2B Verification Response (synchronous):**
+**B2B Verification Response (202 Accepted):**
 ```json
 {
-  "success": true,
-  "final_verdict": "AUTHENTIC",
-  "document_score": 85.0,
-  "credits_remaining": 99,
-  "transaction_ref": "B2B-xyz789"
+  "task_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "pending",
+  "credits_remaining": 2,
+  "message": "Verification queued. Poll the task endpoint for results."
 }
 ```
 
@@ -495,7 +518,7 @@ Platform management and oversight (requires admin Firebase custom claim).
 | `GET` | `/admin/transactions` | List transactions (filterable) | 🔐 Admin |
 | `GET` | `/admin/transactions/{ref}` | Get transaction detail | 🔐 Admin |
 | `GET` | `/admin/api-keys` | List B2B API keys | 🔐 Admin |
-| `PATCH` | `/admin/api-keys/{key}` | Update API key (credits, status) | 🔐 Admin |
+| `PATCH` | `/admin/api-keys/{key_id}` | Update API key (credits, status) | 🔐 Admin |
 | `GET` | `/admin/verifications` | List verifications (filterable) | 🔐 Admin |
 | `POST` | `/admin/email/send-bulk` | Send bulk email to recipients | 🔐 Admin |
 
@@ -548,6 +571,10 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+The project currently specifies minimum dependency versions, so deployments do
+not yet have a fully reproducible transitive dependency lock. Resolve and pin
+the runtime dependency set in the deployment pipeline before production rollout.
+
 ### Step 2: Configure Environment Variables
 Create a `.env` file in the project root with all required credentials:
 
@@ -559,13 +586,13 @@ DATABASE_URL=postgresql://user:password@host/dbname?sslmode=require
 GEMINI_API_KEY=AIzaSy...
 
 # ─── Firebase Authentication ─────────────────────────────────
-FIREBASE_CREDENTIALS_PATH=certverify-backend-firebase-adminsdk-fbsvc-b867004492.json
+FIREBASE_CREDENTIALS_PATH=your-firebase-adminsdk.json
 FIREBASE_WEB_API_KEY=AIzaSy...
 
 # ─── Squad Payment Gateway ───────────────────────────────────
-SQUAD_SECRET_KEY=sandbox_sk_2769eb78936fc094ceecc3faa15892c27b989a7ed12f
+SQUAD_SECRET_KEY=sandbox_sk_your_key_here
 SQUAD_BASE_URL=https://sandbox-api-d.squadco.com
-SQUAD_CALLBACK_URL=https://yourdomain.com/payment/payment_success
+SQUAD_CALLBACK_URL=https://yourdomain.com/payment/paymentsuccess
 
 # ─── Redis / Celery (Cloud) ──────────────────────────────────
 CELERY_BROKER_URL=redis://default:password@your-redis-host:6379/0
@@ -584,6 +611,13 @@ EMAIL_FROM_NAME=CertVerify
 ADMIN_SECRET_KEY=your_admin_secret_key_change_in_production
 FRONTEND_URL=http://localhost:3000
 ```
+
+`SQUAD_CALLBACK_URL` is required and must point to the deployed
+`/payment/paymentsuccess` route. After setting `DATABASE_URL`, apply schema and
+data migrations with `alembic upgrade head` before starting the API or workers.
+For a pre-existing database that already matches the initial schema, stamp only
+the baseline revision `a1b2c3d4e5f6`, then run `alembic upgrade head`; stamping
+`head` would skip required key-hashing and task-payload migrations.
 
 ### Step 3: Verify Configuration
 Test all external connections:
@@ -618,7 +652,7 @@ Open **3 separate terminal windows:**
 
 **Terminal 1: Start Celery Worker**
 ```bash
-celery -A app.core.celery_app worker --loglevel=info --pool=solo
+celery -A app.core.celery_app worker -Q verification,email,admin,default --loglevel=info --pool=solo
 ```
 
 **Terminal 2: Start FastAPI Server**
@@ -637,7 +671,7 @@ celery -A app.core.celery_app beat --loglevel=info
 gunicorn app.main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
 
 # Start Celery worker (separate process)
-celery -A app.core.celery_app worker --loglevel=info --concurrency=4
+celery -A app.core.celery_app worker -Q verification,email,admin,default --loglevel=info --concurrency=4
 
 # Start Celery beat scheduler (separate process)
 celery -A app.core.celery_app beat --loglevel=info
@@ -679,27 +713,6 @@ Test structure:
 ---
 
 ## 📈 Verification Workflow
-
-### Traditional (Synchronous)
-```
-Client uploads certificate
-    ↓
-FastAPI processes immediately
-    ↓
-Gemini analyzes document (30-60s)
-    ↓
-Deterministic checks run
-    ↓
-Assessment questions generated
-    ↓
-User submitted answers
-    ↓
-Knowledge score calculated
-    ↓
-Final verdict returned
-    ↓
-Response sent to client ⏱️ (60-120s total)
-```
 
 ### Asynchronous (Current - Non-blocking)
 ```
@@ -746,6 +759,10 @@ Knowledge Assessment Score (Dynamic Q&A):
   
 Result: 0-100 points
 
+```
+> **Status: planned.** The assessment service exists (app/services/assessment_service.py) but is not yet wired to an endpoint. Current trust scores are based on the document analysis alone.
+
+```
 Composite Trust Score:
   - 60% Document Score
   - 40% Knowledge Score
@@ -777,7 +794,7 @@ Verdict:
 
 ### Verification Tasks
 - **run_verification** — Full certificate forensic analysis
-- **run_b2b_verification** — B2B sync verification
+- **run_b2b_verification** — B2B async verification
 
 ### Email Tasks
 - **send_payment_confirmation_task** — Payment confirmation email
@@ -803,10 +820,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
-COPY .env .
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
+
+Secrets are not baked into the image. Pass them at runtime with `--env-file .env` or your platform's secret manager.
 
 Build & run:
 ```bash
@@ -850,6 +868,7 @@ python -c "import redis; r = redis.from_url('your_url'); print(r.ping())"
 # Check Redis connectivity
 # Restart worker: celery -A app.core.celery_app worker --loglevel=debug
 ```
+- Make sure the worker is started with -Q verification,email,admin,default; tasks are routed to named queues and a worker without -Q only listens on 'default'.
 
 ### Gmail SMTP Authentication Error
 ```bash
@@ -878,7 +897,7 @@ curl -X POST http://localhost:8000/auth/register \
   -d '{
     "email": "jane@example.com",
     "password": "SecurePass123!",
-    "display_name": "Jane Doe"
+    "full_name": "Jane Doe"
   }'
 ```
 
@@ -890,7 +909,7 @@ curl -X POST http://localhost:8000/auth/login \
     "email": "jane@example.com",
     "password": "SecurePass123!"
   }'
-# Response includes: id_token, refresh_token
+# Response includes: access_token, refresh_token
 ```
 
 **3. Initiate Payment**
@@ -900,7 +919,8 @@ curl -X POST http://localhost:8000/payment/pay/initiate \
   -H "Content-Type: application/json" \
   -d '{
     "amount_naira": 5000.00,
-    "email": "jane@example.com"
+    "email": "jane@example.com",
+    "plan": "user_monthly"
   }'
 # Response includes: checkout_url, transaction_ref
 ```

@@ -23,7 +23,12 @@ def validate_document(file_bytes: bytes, filename: str, selected_cert_type: str)
 
     # Step 1 — Run Gemini Multimodal Analysis
     response = analyse_certificate(file_bytes, filename, selected_cert_type)
-    if not response.get("success") or response.get("type_mismatch"):
+    if not response.get("success"):
+        return response
+    if response.get("type_mismatch"):
+        response["decision_limit"] = (
+            "AI-assisted document screening only; this is not confirmation from the issuing authority."
+        )
         return response
 
     template = get_template(selected_cert_type)
@@ -97,5 +102,8 @@ def validate_document(file_bytes: bytes, filename: str, selected_cert_type: str)
         "field_checks": response.get("field_checks", {}),
         "flagged_issues": response.get("flagged_issues", []),
         "tampering_signs": response.get("tampering_signs", []),
-        "confidence_note": response.get("confidence_note", "")
+        "confidence_note": response.get("confidence_note", ""),
+        "decision_limit": (
+            "AI-assisted document screening only; this is not confirmation from the issuing authority."
+        )
     }

@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.api.router import api_router
 # Import all models to ensure they are registered with SQLModel
@@ -33,6 +35,16 @@ app.add_middleware(
 
 # Register main API router
 app.include_router(api_router)
+
+# A lightweight, same-origin developer console. Keep it opt-in so it is not
+# exposed accidentally by production deployments.
+if settings.ENABLE_TEST_CONSOLE:
+    test_console_dir = Path(__file__).resolve().parent / "static" / "test_console"
+    app.mount(
+        "/test-console",
+        StaticFiles(directory=test_console_dir, html=True),
+        name="test-console",
+    )
 
 
 @app.get("/", tags=["Health & Status"])

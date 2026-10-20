@@ -19,6 +19,7 @@ class Transaction(SQLModel, table=True):
     api_key: str | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     paid_at: datetime | None = Field(default=None)
+    payment_effects_applied_at: datetime | None = Field(default=None)
 
     # Forensic AI Pipeline results
     cert_type: str | None = Field(default=None)

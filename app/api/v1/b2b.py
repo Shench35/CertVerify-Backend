@@ -1,6 +1,10 @@
 import logging
 import uuid
-from fastapi import APIRouter, HTTPException, File, UploadFile, Form, Header, Depends, status
+import json
+from fastapi import APIRouter, HTTPException, File, UploadFile, Form, Header, Depends, status, Query
+from sqlmodel import Session, select
+from app.core.database import engine
+from app.models.task_result import TaskResult
 from app.schemas.b2b import CreateApiKeyRequest, AddCreditsRequest
 from app.services.b2b_service import (
     create_b2b_key,
@@ -11,12 +15,14 @@ from app.services.b2b_service import (
     get_user_b2b_keys,
     get_b2b_key_data,
     mask_api_key,
+    stored_key_mask,
     rotate_b2b_key,
     revoke_b2b_key,
 )
 from app.core.security import get_current_user
 from app.tasks.verification_tasks import run_b2b_verification
 from app.services.upload_validation import read_and_validate_upload
+from app.core.api_key_security import hash_api_key
 from app.schemas.verification import CertificateType
 
 router = APIRouter()
@@ -42,7 +48,7 @@ async def generate_key(
             detail="Email is required to generate an API key."
         )
 
-    api_key_record = create_b2b_key(
+    api_key_record, plain_api_key = create_b2b_key(
         email=email,
         user_id=user_id,
         name=payload.name,
@@ -50,8 +56,8 @@ async def generate_key(
 
     return {
         "id": str(api_key_record.id),
-        "api_key": api_key_record.api_key,
-        "masked_key": mask_api_key(api_key_record.api_key),
+        "api_key": plain_api_key,
+        "masked_key": mask_api_key(plain_api_key),
         "name": api_key_record.name,
         "credits": api_key_record.credits,
         "is_active": api_key_record.is_active,
@@ -65,15 +71,21 @@ async def generate_key(
     summary="List User API Keys",
     description="Retrieves all API keys belonging to the authenticated account with secrets masked."
 )
-async def list_keys(current_user: dict = Depends(get_current_user)):
+async def list_keys(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+):
     user_id = current_user.get("uid")
-    keys = get_user_b2b_keys(user_id=user_id)
+    keys, total = get_user_b2b_keys(user_id=user_id, page=page, page_size=page_size)
     return {
-        "count": len(keys),
+        "count": total,
+        "page": page,
+        "page_size": page_size,
         "api_keys": [
             {
                 "id": str(k.id),
-                "masked_key": mask_api_key(k.api_key),
+                "masked_key": stored_key_mask(k),
                 "name": k.name,
                 "credits": k.credits,
                 "is_active": k.is_active,
@@ -173,7 +185,7 @@ async def verify_certificate_b2b(
             detail="Invalid or deactivated API key."
         )
 
-    if key_data.credits <= 0:
+    if get_b2b_balance(x_api_key) <= 0:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail="No verification credits remaining. Please purchase or top up credits."
@@ -192,12 +204,28 @@ async def verify_certificate_b2b(
     task_id = str(uuid.uuid4())
     try:
         filename = file.filename or "certificate"
+        with Session(engine) as session:
+            session.add(TaskResult(
+                task_id=task_id,
+                task_type="b2b_verification",
+                status="pending",
+                api_key_hash=hash_api_key(x_api_key),
+                payload=file_bytes,
+            ))
+            session.commit()
         run_b2b_verification.apply_async(
-            args=[file_bytes.hex(), filename, cert_type.value, x_api_key],
+            args=[task_id, filename, cert_type.value],
             task_id=task_id,
             countdown=0,
         )
     except Exception:
+        with Session(engine) as session:
+            task_result = session.exec(
+                select(TaskResult).where(TaskResult.task_id == task_id)
+            ).first()
+            if task_result and task_result.status == "pending":
+                session.delete(task_result)
+                session.commit()
         try:
             restored = restore_b2b_credit(x_api_key)
         except Exception:
@@ -214,5 +242,42 @@ async def verify_certificate_b2b(
         "task_id": task_id,
         "status": "pending",
         "credits_remaining": get_b2b_balance(x_api_key),
-        "message": "Verification queued. Retrieve the task result from the Celery result backend.",
+        "message": "Verification queued. Poll the task endpoint for results.",
     }
+
+
+@router.get("/tasks/{task_id}", summary="Get B2B Verification Task Result")
+async def get_b2b_task_result(
+    task_id: str,
+    x_api_key: str = Header(..., alias="X-API-Key"),
+):
+    key_data = get_b2b_key_data(x_api_key)
+    if not key_data or not key_data.is_active:
+        raise HTTPException(status_code=401, detail="Invalid or deactivated API key.")
+
+    with Session(engine) as session:
+        task = session.exec(
+            select(TaskResult).where(
+                TaskResult.task_id == task_id,
+                TaskResult.api_key_hash == hash_api_key(x_api_key),
+            )
+        ).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found.")
+
+    result = {
+        "task_id": task.task_id,
+        "status": task.status,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+    }
+    if task.status == "success" and task.result:
+        try:
+            result["result"] = json.loads(task.result)
+        except json.JSONDecodeError:
+            result["result"] = task.result
+    if task.status == "failure":
+        result["error"] = task.error or "Verification processing failed."
+    if task.completed_at:
+        result["completed_at"] = task.completed_at
+    return result

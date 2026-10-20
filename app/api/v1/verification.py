@@ -3,8 +3,8 @@ import logging
 import uuid
 from typing import Optional
 from datetime import datetime
-from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends, status
-from sqlmodel import Session, select
+from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends, status, Query
+from sqlmodel import Session, select, func
 from app.core.database import engine
 from app.models.transaction import Transaction
 from app.models.task_result import TaskResult
@@ -102,15 +102,13 @@ async def analyse_certificate_endpoint(
 
         filename = file.filename
 
-        # Convert file bytes to hex for JSON-safe transmission to Celery
-        file_bytes_hex = file_bytes.hex()
-
         task_result = TaskResult(
             task_id=task_id,
             task_type="verification",
             status="pending",
             user_id=user_id,
-            transaction_ref=active_transaction_ref
+            transaction_ref=active_transaction_ref,
+            payload=file_bytes,
         )
 
         with Session(engine) as session:
@@ -119,7 +117,7 @@ async def analyse_certificate_endpoint(
         task_created = True
 
         run_verification.apply_async(
-            args=[file_bytes_hex, filename, cert_type.value, active_transaction_ref, email],
+            args=[task_id, filename, cert_type.value, active_transaction_ref, email],
             task_id=task_id,
             countdown=0
         )
@@ -227,22 +225,34 @@ async def get_task_status(
     summary="Get User Verification History",
     description="Returns all completed verification reports for the logged-in user."
 )
-async def get_user_verifications(current_user: dict = Depends(get_current_user)):
+async def get_user_verifications(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+):
     user_id = current_user.get("uid")
 
     with Session(engine) as session:
+        filters = (
+            Transaction.user_id == user_id,
+            Transaction.verification_result.is_not(None),
+        )
+        total = session.exec(
+            select(func.count()).select_from(Transaction).where(*filters)
+        ).one()
         statement = (
             select(Transaction)
-            .where(
-                Transaction.user_id == user_id,
-                Transaction.verification_result != None
-            )
+            .where(*filters)
             .order_by(Transaction.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
         )
         records = session.exec(statement).all()
 
     return {
-        "count": len(records),
+        "count": total,
+        "page": page,
+        "page_size": page_size,
         "verifications": [
             {
                 "transaction_ref": r.transaction_ref,
@@ -250,7 +260,10 @@ async def get_user_verifications(current_user: dict = Depends(get_current_user))
                 "created_at": r.created_at,
                 "document_score": r.document_score,
                 "final_trust_score": r.final_trust_score,
-                "final_verdict": r.final_verdict
+                "final_verdict": r.final_verdict,
+                "decision_limit": (
+                    "AI-assisted document screening only; this is not confirmation from the issuing authority."
+                ),
             }
             for r in records
         ]
@@ -293,6 +306,9 @@ async def get_verification_report(
         "extracted_info": val_res.get("extracted_info", {}),
         "flagged_issues": val_res.get("flagged_issues", []),
         "triggered_flags": val_res.get("triggered_flags", []),
-        "tampering_signs": val_res.get("tampering_signs", [])
+        "tampering_signs": val_res.get("tampering_signs", []),
+        "decision_limit": val_res.get(
+            "decision_limit",
+            "AI-assisted document screening only; this is not confirmation from the issuing authority.",
+        )
     }
-

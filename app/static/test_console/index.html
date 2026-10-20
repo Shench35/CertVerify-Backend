@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>CertVerify · API Test Console</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17231f;
+      --muted: #66756e;
+      --line: #dce6df;
+      --paper: #f5f8f5;
+      --card: #fff;
+      --green: #126b4a;
+      --green-dark: #0b5037;
+      --mint: #e2f3e9;
+      --amber: #fff4d6;
+      --red: #a33333;
+      --shadow: 0 14px 44px rgba(29, 54, 41, .07);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(ellipse at 90% 0%, #dcefe2 0, transparent 31rem),
+        var(--paper);
+      font: 15px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header { padding: 30px max(22px, calc((100vw - 1120px) / 2)) 22px; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-mark {
+      display: grid; width: 42px; height: 42px; place-items: center; border-radius: 13px;
+      background: var(--green); color: white; font-weight: 800; letter-spacing: -.05em;
+    }
+    h1 { margin: 0; font-size: 20px; letter-spacing: -.03em; }
+    .subtitle { margin: 1px 0 0; color: var(--muted); font-size: 13px; }
+    main { width: min(1120px, calc(100% - 36px)); margin: 0 auto 64px; }
+    .intro { display: flex; justify-content: space-between; gap: 24px; align-items: end; margin: 12px 0 22px; }
+    .intro h2 { margin: 0 0 4px; font-size: clamp(25px, 4vw, 35px); line-height: 1.15; letter-spacing: -.045em; }
+    .intro p { max-width: 650px; margin: 0; color: var(--muted); }
+    .badge { flex: 0 0 auto; border: 1px solid #b9d8c3; border-radius: 999px; padding: 7px 11px; background: #f2faf4; color: var(--green-dark); font-size: 12px; font-weight: 700; }
+    .toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) auto; align-items: end; gap: 12px; margin: 18px 0; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .card { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 17px; background: var(--card); box-shadow: var(--shadow); }
+    .card.wide { grid-column: 1 / -1; }
+    .card-head { display: flex; justify-content: space-between; align-items: start; gap: 14px; margin-bottom: 16px; }
+    .card h3 { margin: 0; font-size: 17px; letter-spacing: -.02em; }
+    .card-head p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
+    .step { display: grid; width: 27px; height: 27px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: var(--mint); color: var(--green-dark); font-size: 12px; font-weight: 800; }
+    label { display: block; margin-bottom: 6px; color: #34443c; font-size: 12px; font-weight: 700; }
+    input, select, button { font: inherit; }
+    input:not([type=file]), select {
+      width: 100%; min-height: 41px; padding: 9px 11px; border: 1px solid #cdd9d0; border-radius: 9px; background: #fff; color: var(--ink); outline: none;
+    }
+    input:focus, select:focus { border-color: #4d9b70; box-shadow: 0 0 0 3px rgba(58, 143, 91, .12); }
+    input[type=file] { width: 100%; padding: 10px; border: 1px dashed #b9c9bd; border-radius: 9px; background: #f9fbf9; color: var(--muted); }
+    .field { margin-bottom: 12px; }
+    .row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; }
+    button, .button-link {
+      display: inline-flex; justify-content: center; align-items: center; gap: 7px; min-height: 39px; padding: 8px 12px;
+      border: 1px solid var(--green); border-radius: 9px; background: var(--green); color: #fff; font-weight: 700; text-decoration: none; cursor: pointer;
+    }
+    button:hover, .button-link:hover { background: var(--green-dark); }
+    button.secondary { border-color: #cfdbd1; background: #fff; color: #304139; }
+    button.secondary:hover { background: #f2f6f3; }
+    button:disabled { cursor: wait; opacity: .6; }
+    .note { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+    .state { display: flex; align-items: center; gap: 8px; min-height: 36px; margin: 11px 0 0; color: var(--muted); font-size: 13px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #9caaa1; }
+    .state.ok { color: var(--green-dark); }.state.ok .dot { background: #31a269; }
+    .state.error { color: var(--red); }.state.error .dot { background: #d54848; }
+    .state.busy .dot { background: #d29a2c; animation: pulse 1s infinite alternate; }
+    @keyframes pulse { to { opacity: .35; } }
+    .output { position: relative; margin-top: 12px; }
+    pre { max-height: 320px; overflow: auto; margin: 0; padding: 13px; border: 1px solid #e2e9e3; border-radius: 10px; background: #f7faf7; color: #24342b; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .inline-result { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; padding: 10px 12px; border: 1px solid #cde7d5; border-radius: 10px; background: #f1faf3; }
+    .inline-result code { overflow-wrap: anywhere; color: var(--green-dark); }
+    .hidden { display: none !important; }
+    .notice { margin: 16px 0; padding: 12px 14px; border: 1px solid #eddaa8; border-radius: 11px; background: var(--amber); color: #69501b; font-size: 13px; }
+    footer { padding: 20px; text-align: center; color: var(--muted); font-size: 12px; }
+    @media (max-width: 760px) {
+      .grid { grid-template-columns: 1fr; }
+      .card.wide { grid-column: auto; }
+      .intro { display: block; }.badge { display: inline-flex; margin-top: 12px; }
+      .toolbar { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 460px) {
+      header { padding: 22px 18px; } main { width: calc(100% - 24px); }
+      .card { padding: 16px; }.row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="brand-mark">CV</div>
+      <div><h1>CertVerify</h1><p class="subtitle">Developer API test console</p></div>
+    </div>
+  </header>
+  <main>
+    <section class="intro">
+      <div>
+        <h2>Try the API, step by step.</h2>
+        <p>Sign in, upload a sample certificate, follow the async job, or exercise a B2B key. Results and HTTP errors are shown below each action.</p>
+      </div>
+      <span class="badge">Local testing tool</span>
+    </section>
+
+    <div class="notice"><strong>Testing note:</strong> verification uses credits and sends documents to the configured AI provider. Use synthetic or approved sample documents. Payment buttons call the configured Squad environment and may initiate a real checkout.</div>
+
+    <section class="toolbar">
+      <div class="field" style="margin:0">
+        <label for="apiBase">API base URL</label>
+        <input id="apiBase" type="url" autocomplete="url" spellcheck="false">
+      </div>
+      <button id="clearSession" class="secondary" type="button">Clear session</button>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <div class="card-head"><div><h3>Account</h3><p>Register or sign in with Firebase Auth.</p></div><span class="step">01</span></div>
+        <form id="authForm">
+          <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="email" required></div>
+          <div class="field"><label for="password">Password</label><input id="password" type="password" autocomplete="current-password" required minlength="6"></div>
+          <div class="field"><label for="fullName">Name <span style="font-weight:400;color:#718078">(registration only)</span></label><input id="fullName" type="text" autocomplete="name"></div>
+          <div class="actions">
+            <button type="submit" data-action="login">Sign in</button>
+            <button type="submit" class="secondary" data-action="register">Create account</button>
+            <button type="button" class="secondary" id="forgotPassword">Forgot password</button>
+          </div>
+        </form>
+        <div class="field" style="margin-top:14px"><label for="token">Firebase ID token</label><input id="token" type="password" autocomplete="off" placeholder="Sign in or paste an ID token"></div>
+        <div class="actions"><button id="profileButton" class="secondary" type="button">Get profile</button><button id="creditsButton" class="secondary" type="button">Get credits</button></div>
+        <div id="authState" class="state"><span class="dot"></span><span>Not signed in</span></div>
+        <div class="output"><pre id="authOutput">Responses will appear here.</pre></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><div><h3>User verification</h3><p>Upload and poll the result from the user API.</p></div><span class="step">02</span></div>
+        <form id="userVerifyForm">
+          <div class="row">
+            <div class="field"><label for="certType">Certificate type</label><select id="certType"><option>WAEC</option><option>NECO</option></select></div>
+            <div class="field"><label for="transactionRef">Paid transaction reference <span style="font-weight:400;color:#718078">(optional)</span></label><input id="transactionRef" type="text" placeholder="Leave empty to use a credit"></div>
+          </div>
+          <div class="field"><label for="userFile">Certificate file</label><input id="userFile" type="file" accept="image/jpeg,image/png,application/pdf" required></div>
+          <div class="actions"><button type="submit">Upload &amp; verify</button><button id="userHistory" type="button" class="secondary">Load history</button><button id="paymentHistory" type="button" class="secondary">Payment history</button></div>
+        </form>
+        <div id="userVerifyState" class="state"><span class="dot"></span><span>Waiting for an upload</span></div>
+        <div class="output"><pre id="userVerifyOutput">Upload a document to start.</pre></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><div><h3>B2B API key</h3><p>Generate a key, then use it for direct verification.</p></div><span class="step">03</span></div>
+        <div class="field"><label for="keyName">Key name</label><input id="keyName" type="text" value="Local test key"></div>
+        <div class="actions"><button id="createKey" type="button">Generate key</button><button id="listKeys" class="secondary" type="button">List keys</button></div>
+        <div id="newKey" class="inline-result hidden"><code id="newKeyValue"></code><button id="copyKey" class="secondary" type="button">Copy</button></div>
+        <div class="field" style="margin-top:14px"><label for="apiKey">B2B API key</label><input id="apiKey" type="password" autocomplete="off" placeholder="Paste or generate a key"></div>
+        <div id="keyState" class="state"><span class="dot"></span><span>No B2B key selected</span></div>
+        <div class="output"><pre id="keyOutput">Responses will appear here.</pre></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><div><h3>B2B verification</h3><p>Submit with an API key and poll the task result.</p></div><span class="step">04</span></div>
+        <form id="b2bVerifyForm">
+          <div class="field"><label for="b2bCertType">Certificate type</label><select id="b2bCertType"><option>WAEC</option><option>NECO</option></select></div>
+          <div class="field"><label for="b2bFile">Certificate file</label><input id="b2bFile" type="file" accept="image/jpeg,image/png,application/pdf" required></div>
+          <div class="actions"><button type="submit">Upload to B2B API</button><button id="pollB2b" class="secondary" type="button">Poll latest task</button></div>
+        </form>
+        <div id="b2bState" class="state"><span class="dot"></span><span>Waiting for an upload</span></div>
+        <div class="output"><pre id="b2bOutput">B2B task results will appear here.</pre></div>
+      </article>
+
+      <article class="card wide">
+        <div class="card-head"><div><h3>Payments</h3><p>Exercise subscription checkout and provider verification.</p></div><span class="step">05</span></div>
+        <div class="row">
+          <div class="field"><label for="plan">Plan</label><select id="plan"><option value="user_monthly">User monthly · ₦5,000</option><option value="b2b_monthly">B2B monthly · ₦20,000</option></select></div>
+          <div class="field"><label for="amount">Amount in naira</label><input id="amount" type="number" value="5000" min="1" step="1"></div>
+          <div class="field"><label for="paymentEmail">Receipt email</label><input id="paymentEmail" type="email" placeholder="Uses signed-in email when blank"></div>
+          <div class="field"><label for="paymentKey">B2B key <span style="font-weight:400;color:#718078">(B2B plan only)</span></label><input id="paymentKey" type="password" autocomplete="off" placeholder="Uses the B2B key above when blank"></div>
+        </div>
+        <div class="actions"><button id="initPayment" type="button">Initiate checkout</button><a id="checkoutLink" class="button-link hidden" target="_blank" rel="noopener noreferrer">Open checkout</a><button id="verifyPayment" class="secondary" type="button">Verify reference</button><button id="loadPayments" class="secondary" type="button">Payment history</button></div>
+        <div class="field" style="margin-top:12px"><label for="paymentRef">Transaction reference</label><input id="paymentRef" type="text" placeholder="Filled after checkout initiation"></div>
+        <div id="paymentState" class="state"><span class="dot"></span><span>Ready</span></div>
+        <div class="output"><pre id="paymentOutput">Payment responses will appear here.</pre></div>
+      </article>
+    </section>
+    <footer>CertVerify developer console · served by this API · test with synthetic or approved documents</footer>
+  </main>
+
+  <script>
+    (() => {
+      const $ = (id) => document.getElementById(id);
+      const store = window.sessionStorage;
+      const state = {
+        token: store.getItem("cv_token") || "",
+        apiKey: store.getItem("cv_api_key") || "",
+        taskId: store.getItem("cv_b2b_task") || "",
+        paymentRef: store.getItem("cv_payment_ref") || "",
+        email: store.getItem("cv_email") || "",
+      };
+      const baseInput = $("apiBase");
+      baseInput.value = store.getItem("cv_api_base") || window.location.origin;
+      $("token").value = state.token;
+      $("apiKey").value = state.apiKey;
+      $("paymentKey").value = state.apiKey;
+      $("paymentEmail").value = state.email;
+      $("paymentRef").value = state.paymentRef;
+
+      const base = () => baseInput.value.trim().replace(/\/+$/, "");
+      const authHeaders = () => state.token ? { Authorization: `Bearer ${state.token}` } : {};
+      const b2bHeaders = () => state.apiKey ? { "X-API-Key": state.apiKey } : {};
+      const show = (id, value) => { $(id).textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2); };
+      const setState = (id, message, kind = "") => {
+        const el = $(id); el.className = `state ${kind}`; el.lastElementChild.textContent = message;
+      };
+      const saveBase = () => store.setItem("cv_api_base", base());
+      const syncToken = () => { state.token = $("token").value.trim(); if (state.token) store.setItem("cv_token", state.token); else store.removeItem("cv_token"); };
+      const syncApiKey = (value = $("apiKey").value) => {
+        state.apiKey = value.trim(); $("apiKey").value = state.apiKey; $("paymentKey").value = state.apiKey;
+        if (state.apiKey) store.setItem("cv_api_key", state.apiKey); else store.removeItem("cv_api_key");
+      };
+      const request = async (path, options = {}) => {
+        saveBase();
+        const response = await fetch(`${base()}${path}`, options);
+        const text = await response.text();
+        let data;
+        try { data = text ? JSON.parse(text) : {}; } catch { data = text; }
+        if (!response.ok) {
+          const detail = data && typeof data === "object" ? (data.detail || data.message || data.reason) : data;
+          throw new Error(`${response.status} ${response.statusText}${detail ? ` · ${detail}` : ""}`);
+        }
+        return data;
+      };
+      const run = async (stateId, outputId, work) => {
+        setState(stateId, "Request in progress…", "busy");
+        try {
+          const result = await work();
+          let display = result;
+          if (result && typeof result === "object" && outputId === "authOutput") {
+            display = Object.fromEntries(Object.entries(result).map(([key, value]) =>
+              [key, ["access_token", "refresh_token"].includes(key) ? "[stored in this tab]" : value]));
+          }
+          if (result && typeof result === "object" && outputId === "keyOutput" && result.api_key) {
+            display = { ...result, api_key: "[shown once in the key field above]" };
+          }
+          show(outputId, display);
+          if (result?.status === "failure") setState(stateId, result.error || "Task failed", "error");
+          else setState(stateId, "Request completed", "ok");
+          return result;
+        }
+        catch (error) { show(outputId, { error: error.message }); setState(stateId, error.message, "error"); return null; }
+      };
+      const pollUser = async (taskId) => {
+        for (let attempt = 0; attempt < 90; attempt++) {
+          const result = await request(`/AI_pipeline/verify/status/${encodeURIComponent(taskId)}`, { headers: authHeaders() });
+          show("userVerifyOutput", result);
+          if (result.status === "success") {
+            const reference = result.result?.transaction_ref;
+            if (reference) {
+              const report = await request(`/AI_pipeline/verify/report/${encodeURIComponent(reference)}`, { headers: authHeaders() });
+              show("userVerifyOutput", { task: result, report });
+            }
+            setState("userVerifyState", "Verification complete", "ok");
+            return result;
+          }
+          if (result.status === "failure") { setState("userVerifyState", result.error || "Verification failed", "error"); return result; }
+          setState("userVerifyState", `Task ${result.status || "running"} · checking again in 2 seconds`, "busy");
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        throw new Error("Polling timed out after 3 minutes; use the task ID to check again.");
+      };
+      const pollB2b = async (taskId) => {
+        if (!state.apiKey) throw new Error("Enter a B2B API key first.");
+        if (!taskId) throw new Error("Submit a B2B verification first, or provide a task ID.");
+        for (let attempt = 0; attempt < 90; attempt++) {
+          const result = await request(`/third_party/api/v1/tasks/${encodeURIComponent(taskId)}`, { headers: b2bHeaders() });
+          show("b2bOutput", result);
+          if (result.status === "success") { setState("b2bState", "B2B verification complete", "ok"); return result; }
+          if (result.status === "failure") { setState("b2bState", result.error || "B2B verification failed", "error"); return result; }
+          setState("b2bState", `Task ${result.status || "running"} · checking again in 2 seconds`, "busy");
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        throw new Error("Polling timed out after 3 minutes; use the task ID to check again.");
+      };
+
+      baseInput.addEventListener("change", saveBase);
+      $("token").addEventListener("change", syncToken);
+      $("apiKey").addEventListener("change", () => syncApiKey());
+      $("clearSession").addEventListener("click", () => {
+        ["cv_token", "cv_api_key", "cv_b2b_task", "cv_user_task", "cv_payment_ref", "cv_email"].forEach(key => store.removeItem(key));
+        state.token = state.apiKey = state.taskId = state.paymentRef = state.email = "";
+        $("token").value = $("apiKey").value = $("paymentKey").value = $("paymentRef").value = $("paymentEmail").value = "";
+        ["authOutput", "userVerifyOutput", "keyOutput", "b2bOutput", "paymentOutput"].forEach(id => show(id, "Session cleared."));
+        $("userFile").value = $("b2bFile").value = "";
+        $("newKey").classList.add("hidden"); setState("authState", "Session cleared");
+      });
+
+      $("authForm").addEventListener("submit", async event => {
+        event.preventDefault();
+        const mode = event.submitter?.dataset.action || "login";
+        const email = $("email").value.trim(); const password = $("password").value;
+        const path = mode === "register" ? "/auth/register" : "/auth/login";
+        const payload = mode === "register" ? { email, password, full_name: $("fullName").value.trim() || null } : { email, password };
+        const result = await run("authState", "authOutput", () => request(path, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+        }));
+        if (result?.access_token) {
+          state.token = result.access_token; state.email = result.email || email;
+          store.setItem("cv_token", state.token); store.setItem("cv_email", state.email);
+          $("token").value = state.token; $("paymentEmail").value = state.email;
+          setState("authState", `Signed in as ${state.email}`, "ok");
+        }
+      });
+      $("forgotPassword").addEventListener("click", () => run("authState", "authOutput", () => request("/auth/forgot-password", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: $("email").value.trim() }),
+      })));
+      $("profileButton").addEventListener("click", () => { syncToken(); return run("authState", "authOutput", () => request("/auth/me", { headers: authHeaders() })); });
+      $("creditsButton").addEventListener("click", () => { syncToken(); return run("authState", "authOutput", () => request("/AI_pipeline/verify/credits", { headers: authHeaders() })); });
+
+      $("userVerifyForm").addEventListener("submit", async event => {
+        event.preventDefault(); syncToken();
+        const file = $("userFile").files[0]; if (!file) return;
+        const form = new FormData(); form.append("file", file); form.append("cert_type", $("certType").value);
+        const ref = $("transactionRef").value.trim(); if (ref) form.append("transaction_ref", ref);
+        const accepted = await run("userVerifyState", "userVerifyOutput", () => request("/AI_pipeline/verify/analyse", { method: "POST", headers: authHeaders(), body: form }));
+        if (accepted?.task_id) { store.setItem("cv_user_task", accepted.task_id); await run("userVerifyState", "userVerifyOutput", () => pollUser(accepted.task_id)); }
+      });
+      $("userHistory").addEventListener("click", () => { syncToken(); return run("userVerifyState", "userVerifyOutput", () => request("/AI_pipeline/verify/history", { headers: authHeaders() })); });
+      $("paymentHistory").addEventListener("click", () => { syncToken(); return run("userVerifyState", "userVerifyOutput", () => request("/payment/history", { headers: authHeaders() })); });
+
+      $("createKey").addEventListener("click", async () => {
+        syncToken();
+        const result = await run("keyState", "keyOutput", () => request("/third_party/api/v1/keys/generate", {
+          method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ name: $("keyName").value.trim() || "Local test key" }),
+        }));
+        if (result?.api_key) {
+          syncApiKey(result.api_key); $("newKeyValue").textContent = result.api_key; $("newKey").classList.remove("hidden");
+          setState("keyState", "Key created. Copy it now; the API only returns the secret once.", "ok");
+        }
+      });
+      $("copyKey").addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText($("newKeyValue").textContent); setState("keyState", "Secret copied to clipboard", "ok"); }
+        catch { setState("keyState", "Clipboard unavailable; select and copy the key manually", "error"); }
+      });
+      $("listKeys").addEventListener("click", () => { syncToken(); return run("keyState", "keyOutput", () => request("/third_party/api/v1/keys", { headers: authHeaders() })); });
+
+      $("b2bVerifyForm").addEventListener("submit", async event => {
+        event.preventDefault(); syncApiKey();
+        const file = $("b2bFile").files[0]; if (!file) return;
+        const form = new FormData(); form.append("file", file); form.append("cert_type", $("b2bCertType").value);
+        const accepted = await run("b2bState", "b2bOutput", () => request("/third_party/api/v1/verify", { method: "POST", headers: b2bHeaders(), body: form }));
+        if (accepted?.task_id) { state.taskId = accepted.task_id; store.setItem("cv_b2b_task", state.taskId); await run("b2bState", "b2bOutput", () => pollB2b(state.taskId)); }
+      });
+      $("pollB2b").addEventListener("click", () => run("b2bState", "b2bOutput", () => pollB2b(state.taskId || store.getItem("cv_b2b_task"))));
+
+      $("plan").addEventListener("change", () => { $("amount").value = $("plan").value === "b2b_monthly" ? "20000" : "5000"; });
+      $("initPayment").addEventListener("click", async () => {
+        $("checkoutLink").classList.add("hidden");
+        syncToken(); const plan = $("plan").value;
+        const payload = {
+          plan, amount_naira: Number($("amount").value),
+          email: $("paymentEmail").value.trim() || undefined,
+          api_key: plan === "b2b_monthly" ? ($("paymentKey").value.trim() || state.apiKey || undefined) : undefined,
+        };
+        const result = await run("paymentState", "paymentOutput", () => request("/payment/pay/initiate", {
+          method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" }, body: JSON.stringify(payload),
+        }));
+        if (result?.transaction_ref) {
+          state.paymentRef = result.transaction_ref; $("paymentRef").value = state.paymentRef; store.setItem("cv_payment_ref", state.paymentRef);
+          const pre = $("paymentOutput"); pre.textContent += "\n\nCheckout URL: " + result.checkout_url;
+          const checkout = $("checkoutLink"); checkout.href = result.checkout_url; checkout.classList.remove("hidden");
+        }
+      });
+      $("verifyPayment").addEventListener("click", () => {
+        syncToken(); const ref = $("paymentRef").value.trim();
+        if (!ref) { setState("paymentState", "Enter a transaction reference first", "error"); return; }
+        return run("paymentState", "paymentOutput", () => request(`/payment/pay/verify/${encodeURIComponent(ref)}`, { headers: authHeaders() }));
+      });
+      $("loadPayments").addEventListener("click", () => { syncToken(); return run("paymentState", "paymentOutput", () => request("/payment/history", { headers: authHeaders() })); });
+
+      if (state.token) setState("authState", `Token loaded${state.email ? ` for ${state.email}` : ""}`, "ok");
+      if (state.apiKey) setState("keyState", "B2B key loaded for this browser tab", "ok");
+    })();
+  </script>
+</body>
+</html>

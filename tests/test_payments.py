@@ -1,10 +1,16 @@
 import uuid
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlmodel import Session, select
 from app.core.database import engine
 from app.models.transaction import Transaction
-from app.services.payment_service import mark_transaction_success, verify_webhook_signature
+from app.models.user_credit import UserCreditAccount
+from app.services.credit_service import SUBSCRIPTION_DURATION
+from app.services.payment_service import (
+    mark_transaction_success,
+    settle_payment,
+    verify_webhook_signature,
+)
 
 
 def test_payment_history_endpoint(auth_client, mock_user):
@@ -113,6 +119,144 @@ def test_transaction_success_transition_is_idempotent():
     assert first_transitioned is True
     assert second_transaction.status == "success"
     assert second_transitioned is False
+
+
+def test_second_payment_extends_active_subscription():
+    user_id = f"sub-test-{uuid.uuid4().hex}"
+    transaction_refs = [str(uuid.uuid4()), str(uuid.uuid4())]
+    with Session(engine) as session:
+        for transaction_ref in transaction_refs:
+            session.add(Transaction(
+                transaction_ref=transaction_ref,
+                user_id=user_id,
+                email="subscription-test@example.com",
+                amount_naira=5000.0,
+                amount_kobo=500000,
+                status="pending",
+                payment_plan="user_monthly",
+            ))
+        session.commit()
+
+    settle_payment(transaction_refs[0])
+    with Session(engine) as session:
+        account = session.exec(
+            select(UserCreditAccount).where(UserCreditAccount.user_id == user_id)
+        ).first()
+        first_expiry = account.subscription_expires_at
+
+    settle_payment(transaction_refs[1])
+    with Session(engine) as session:
+        account = session.exec(
+            select(UserCreditAccount).where(UserCreditAccount.user_id == user_id)
+        ).first()
+        second_expiry = account.subscription_expires_at
+
+    assert abs((second_expiry - first_expiry - SUBSCRIPTION_DURATION).total_seconds()) < 60
+
+
+def test_payment_after_expiry_starts_from_now():
+    user_id = f"sub-test-{uuid.uuid4().hex}"
+    transaction_refs = [str(uuid.uuid4()), str(uuid.uuid4())]
+    with Session(engine) as session:
+        for transaction_ref in transaction_refs:
+            session.add(Transaction(
+                transaction_ref=transaction_ref,
+                user_id=user_id,
+                email="subscription-test@example.com",
+                amount_naira=5000.0,
+                amount_kobo=500000,
+                status="pending",
+                payment_plan="user_monthly",
+            ))
+        session.commit()
+
+    settle_payment(transaction_refs[0])
+    with Session(engine) as session:
+        account = session.exec(
+            select(UserCreditAccount).where(UserCreditAccount.user_id == user_id)
+        ).first()
+        account.subscription_expires_at = datetime.utcnow() - timedelta(days=1)
+        session.add(account)
+        session.commit()
+
+    settle_payment(transaction_refs[1])
+    with Session(engine) as session:
+        account = session.exec(
+            select(UserCreditAccount).where(UserCreditAccount.user_id == user_id)
+        ).first()
+        new_expiry = account.subscription_expires_at
+
+    expected_expiry = datetime.utcnow() + SUBSCRIPTION_DURATION
+    assert abs((new_expiry - expected_expiry).total_seconds()) < 60
+
+
+def test_repeat_payment_does_not_reduce_credits():
+    user_id = f"sub-test-{uuid.uuid4().hex}"
+    transaction_refs = [str(uuid.uuid4()), str(uuid.uuid4())]
+    with Session(engine) as session:
+        for transaction_ref in transaction_refs:
+            session.add(Transaction(
+                transaction_ref=transaction_ref,
+                user_id=user_id,
+                email="subscription-test@example.com",
+                amount_naira=5000.0,
+                amount_kobo=500000,
+                status="pending",
+                payment_plan="user_monthly",
+            ))
+        session.commit()
+
+    settle_payment(transaction_refs[0])
+    with Session(engine) as session:
+        account = session.exec(
+            select(UserCreditAccount).where(UserCreditAccount.user_id == user_id)
+        ).first()
+        account.credits = 25
+        session.add(account)
+        session.commit()
+
+    settle_payment(transaction_refs[1])
+    with Session(engine) as session:
+        account = session.exec(
+            select(UserCreditAccount).where(UserCreditAccount.user_id == user_id)
+        ).first()
+        assert account.credits >= 25
+
+
+def test_settle_payment_is_idempotent_for_same_transaction():
+    user_id = f"sub-test-{uuid.uuid4().hex}"
+    transaction_ref = str(uuid.uuid4())
+    with Session(engine) as session:
+        session.add(Transaction(
+            transaction_ref=transaction_ref,
+            user_id=user_id,
+            email="subscription-test@example.com",
+            amount_naira=5000.0,
+            amount_kobo=500000,
+            status="pending",
+            payment_plan="user_monthly",
+        ))
+        session.commit()
+
+    first_transaction, first_transitioned = settle_payment(transaction_ref)
+    with Session(engine) as session:
+        account = session.exec(
+            select(UserCreditAccount).where(UserCreditAccount.user_id == user_id)
+        ).first()
+        first_expiry = account.subscription_expires_at
+
+    second_transaction, second_transitioned = settle_payment(transaction_ref)
+    with Session(engine) as session:
+        account = session.exec(
+            select(UserCreditAccount).where(UserCreditAccount.user_id == user_id)
+        ).first()
+        second_expiry = account.subscription_expires_at
+
+    assert first_transaction is not None
+    assert first_transitioned is True
+    assert second_transaction is not None
+    assert second_transitioned is False
+    assert second_expiry == first_expiry
 
 
 def test_webhook_signature_verification_helper():

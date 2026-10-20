@@ -2,10 +2,12 @@ from datetime import datetime, timedelta
 
 from sqlmodel import Session, select, update
 from sqlalchemy import and_, case, or_
+from sqlalchemy.exc import IntegrityError
 
 from app.core.database import engine
 from app.models.api_key import ApiKey
 from app.models.user_credit import UserCreditAccount
+from app.core.api_key_security import hash_api_key
 
 FREE_DAILY_CREDITS = 3
 USER_SUBSCRIPTION_CREDITS = 20
@@ -33,8 +35,20 @@ def ensure_user_credit_account(user_id: str, email: str | None) -> UserCreditAcc
                 credits_reset_at=now + DAILY_RESET_INTERVAL,
             )
             session.add(account)
-            session.commit()
-            session.refresh(account)
+            try:
+                session.commit()
+                session.refresh(account)
+            except IntegrityError:
+                # Another concurrent first-use request may have inserted the
+                # unique user row between our SELECT and INSERT.
+                session.rollback()
+                account = session.exec(
+                    select(UserCreditAccount).where(
+                        UserCreditAccount.user_id == user_id
+                    )
+                ).first()
+                if not account:
+                    raise
         return account
 
 
@@ -133,11 +147,13 @@ def activate_user_subscription(user_id: str, email: str | None) -> UserCreditAcc
     now = datetime.utcnow()
     with Session(engine) as session:
         account = session.get(UserCreditAccount, account.id)
+        current_expiry = account.subscription_expires_at
+        base = current_expiry if current_expiry and current_expiry > now else now
         account.daily_credit_limit = USER_SUBSCRIPTION_CREDITS
-        account.credits = USER_SUBSCRIPTION_CREDITS
+        account.credits = max(account.credits, USER_SUBSCRIPTION_CREDITS)
         account.credits_reset_at = now + DAILY_RESET_INTERVAL
         account.subscription_plan = "user_monthly"
-        account.subscription_expires_at = now + SUBSCRIPTION_DURATION
+        account.subscription_expires_at = base + SUBSCRIPTION_DURATION
         account.updated_at = now
         session.add(account)
         session.commit()
@@ -181,14 +197,19 @@ def refresh_b2b_key(key: ApiKey) -> ApiKey:
 def activate_b2b_subscription(api_key: str) -> ApiKey | None:
     now = datetime.utcnow()
     with Session(engine) as session:
-        key = session.exec(select(ApiKey).where(ApiKey.api_key == api_key)).first()
+        key = session.exec(
+            select(ApiKey).where(ApiKey.api_key == hash_api_key(api_key))
+        ).first()
         if not key:
             return None
+        current_expiry = key.subscription_expires_at
+        base = current_expiry if current_expiry and current_expiry > now else now
         key.daily_credit_limit = B2B_SUBSCRIPTION_CREDITS
-        key.credits = B2B_SUBSCRIPTION_CREDITS
+        key.credits = max(key.credits, B2B_SUBSCRIPTION_CREDITS)
         key.credits_reset_at = now + DAILY_RESET_INTERVAL
         key.subscription_plan = "b2b_monthly"
-        key.subscription_expires_at = now + SUBSCRIPTION_DURATION
+        key.subscription_expires_at = base + SUBSCRIPTION_DURATION
+        key.updated_at = now
         session.add(key)
         session.commit()
         session.refresh(key)
