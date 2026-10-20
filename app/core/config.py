@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     PROJECT_DESCRIPTION: str = "AI-Powered Forensic Certificate Verification Platform"
     VERSION: str = "1.0.0"
     DEBUG: bool = False
-    ENABLE_TEST_CONSOLE: bool = False
+    ENABLE_TEST_CONSOLE: bool = True
 
     # CORS
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
